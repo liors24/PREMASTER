@@ -34,13 +34,15 @@
       const name = dec.decode(u8.subarray(p + 46, p + 46 + nlen));
       const lnlen = dv.getUint16(off + 26, true), lelen = dv.getUint16(off + 28, true);
       const start = off + 30 + lnlen + lelen;
-      files[name] = { method, data: u8.subarray(start, start + csize) };
+      files[name.replace(/\\/g, '/').replace(/^\//, '')] = { method, data: u8.subarray(start, start + csize) };
       p += 46 + nlen + elen + clen;
     }
     return {
       has: (name) => !!files[name],
       async text(name) {
-        const f = files[name]; if (!f) return null;
+        let f = files[name];
+        if (!f) { const k = Object.keys(files).find((x) => x.toLowerCase() === name.toLowerCase()); f = k && files[k]; }
+        if (!f) return null;
         const raw = f.method === 8 ? await inflateRaw(f.data) : f.data;
         return dec.decode(raw);
       },
@@ -92,12 +94,17 @@
     const baseDir = wbPath.includes('/') ? wbPath.slice(0, wbPath.lastIndexOf('/') + 1) : '';
     const wb = xml(wbText);
     const rels = xml((await zip.text(baseDir + '_rels/' + wbPath.split('/').pop() + '.rels')) || '<Relationships/>');
-    const relMap = {};
-    for (const r of tags(rels, 'Relationship')) relMap[r.getAttribute('Id')] = r.getAttribute('Target');
+    const relMap = {}; const relByType = {};
+    for (const r of tags(rels, 'Relationship')) {
+      relMap[r.getAttribute('Id')] = r.getAttribute('Target');
+      const t = (r.getAttribute('Type') || '').split('/').pop();
+      relByType[t] = r.getAttribute('Target');
+    }
+    const resolve = (t) => (t.startsWith('/') ? t.slice(1) : baseDir + t);
 
     const shared = [];
     onp(0.08, 'מחלץ את הטקסטים');
-    const ssText = await zip.text(baseDir + 'sharedStrings.xml');
+    const ssText = await zip.text(relByType.sharedStrings ? resolve(relByType.sharedStrings) : baseDir + 'sharedStrings.xml');
     onp(0.15, 'מפענח טקסטים');
     if (ssText) {
       // פענוח מהיר בביטויים רגולריים — מהיר פי כמה מ-DOM בקבצים גדולים
@@ -111,7 +118,7 @@
 
     // זיהוי תאי תאריך לפי סגנון
     const dateStyles = new Set();
-    const stText = await zip.text(baseDir + 'styles.xml');
+    const stText = await zip.text(relByType.styles ? resolve(relByType.styles) : baseDir + 'styles.xml');
     if (stText) {
       const st = xml(stText);
       const custom = {};
@@ -200,7 +207,7 @@
       if (q) {
         if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
         else cur += ch;
-      } else if (ch === '"') q = true;
+      } else if (ch === '"' && cur === '') q = true;
       else if (ch === delim) { row.push(cur); cur = ''; }
       else if (ch === '\n') { row.push(cur.replace(/\r$/, '')); rows.push(row); row = []; cur = ''; }
       else cur += ch;
@@ -253,8 +260,11 @@
     const isCFB = u8[0] === 0xd0 && u8[1] === 0xcf && u8[2] === 0x11 && u8[3] === 0xe0;
     if (isCFB && /\.xls[xmb]$/.test(name)) throw new Error(ENCRYPTED); // xlsx עטוף בהצפנה
     if (isZip && typeof DecompressionStream !== 'undefined') {
-      try { return await readXlsx(buf, (f, st, d) => onp(0.15 + f * 0.85, st, d)); }
-      catch (e) { console.warn('xlsx-lite failed, trying SheetJS', e); }
+      try {
+        const out = await readXlsx(buf, (f, st, d) => onp(0.15 + f * 0.85, st, d));
+        if (out.some((sh) => sh.rows.some((r) => r && r.some((v) => v !== '' && v != null)))) return out;
+        console.warn('xlsx-lite found no data, trying SheetJS');
+      } catch (e) { console.warn('xlsx-lite failed, trying SheetJS', e); }
     }
     onp(0.3, 'טוען רכיב קריאה לקבצים ישנים');
     const out = await viaSheetJS(buf);

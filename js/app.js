@@ -294,6 +294,7 @@
       { label: 'גיבוי נתונים (JSON)', icon: 'download', action: () => download(new Blob([Store.exportJson()], { type: 'application/json' }), `procurement-backup-${D.today()}.json`) },
       { label: 'שחזור ממגיבוי…', icon: 'upload', action: () => pickFile('.json', async (f) => { Store.importJson(await f.text()); renderTabs(); renderMain(); UI.toast('הגיבוי מוזג לנתונים', 'ok'); }) },
       Store.cfg.mode === 'github' ? { label: 'הגדרות חיבור', icon: 'settings', action: () => renderSetup() } : null,
+      { label: `גרסה ${window.APP_VERSION || ''} · רענון`, icon: 'refresh', action: () => location.reload() },
       { sep: true },
       { label: 'יציאה', icon: 'logout', action: () => { Store.logout(); renderAuth('login'); } },
     ]);
@@ -628,7 +629,7 @@
     const prog = UI.progress('קורא את ' + file.name);
     let sheets;
     try { sheets = await XlsxLite.readFile(file, (f, st, d) => prog.set(f * 0.98, st, d)); }
-    catch (e) { prog.fail(); console.error(e); return UI.toast(e.message || 'לא הצלחתי לקרוא את הקובץ.', 'error', 9000); }
+    catch (e) { prog.fail(); console.error(e); return UI.toast((e.message || 'לא הצלחתי לקרוא את הקובץ.') + ` (${file.name}, ${(file.size / 1048576).toFixed(1)}MB)`, 'error', 12000); }
     sheets = sheets.filter((s) => s.rows.some((r) => r && r.some((v) => v !== '' && v != null)));
     if (!sheets.length) { prog.fail(); return UI.toast('לא נמצאו נתונים בקובץ.', 'error'); }
     const total = sheets.reduce((a, s) => a + s.rows.length, 0);
