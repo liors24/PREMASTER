@@ -178,6 +178,7 @@
             ci++;
           }
         }
+        for (let k = 0; k < arr.length; k++) if (arr[k] === undefined) arr[k] = ''; // בלי "חורים" במקום תאים ריקים
         rows[ri] = arr;
         if (rowCount % 1500 === 0) { onp(base + span * (rowRe.lastIndex / text.length), `קורא גיליון "${s.getAttribute('name')}"`, `${rowCount.toLocaleString('en-US')} שורות`); await tick(); }
       }

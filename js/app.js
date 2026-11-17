@@ -636,6 +636,16 @@
     await prog.done(`הקובץ נקרא · ${fmtN(total)} שורות`);
     importDialog(ds, p, file.name, sheets);
   }
+  /**
+   * כותרות הגיליון: תא כותרת ריק מקבל שם "עמודה N", והאורך מכסה גם עמודות שיש בהן נתונים בלי כותרת.
+   * (Array.from ולא map — כדי שתאים ריקים לא ייצרו "חורים" במערך)
+   */
+  function headersOf(sh, hr) {
+    const head = sh.rows[hr] || [];
+    let width = head.length;
+    for (let r = hr + 1; r < Math.min(sh.rows.length, hr + 200); r++) width = Math.max(width, (sh.rows[r] || []).length);
+    return Array.from({ length: width }, (_, i) => String(head[i] ?? '').trim() || `עמודה ${i + 1}`);
+  }
   function detectHeader(rows) {
     let best = 0, bestN = -1;
     for (let i = 0; i < Math.min(rows.length, 20); i++) {
@@ -654,7 +664,7 @@
     const draw = () => {
       const sh = sheets[si];
       const hr = +($('[data-hr]', body)?.value ?? detectHeader(sh.rows));
-      const headers = (sh.rows[hr] || []).map((h, i) => String(h ?? '').trim() || `עמודה ${i + 1}`);
+      const headers = headersOf(sh, hr);
       const data = sh.rows.slice(hr + 1).filter((r) => r && r.some((v) => v !== '' && v != null));
       const prev = data.slice(0, 5);
       const cols = Store.columns('orders');
@@ -692,7 +702,7 @@
       title: isBom ? `ייבוא BOM${p ? ' · ' + p.name : ''}` : 'ייבוא טבלת הזמנות', body, wide: true,
       actions: [{ label: 'ביטול' }, { label: 'ייבוא', primary: true, icon: 'upload', action: async () => {
         const sh = sheets[si]; const hr = +$('[data-hr]', body).value;
-        const headers = (sh.rows[hr] || []).map((h, i) => String(h ?? '').trim() || `עמודה ${i + 1}`);
+        const headers = headersOf(sh, hr);
         const data = sh.rows.slice(hr + 1).filter((r) => r && r.some((v) => v !== '' && v != null));
         if (isBom) {
           const map = {}; body.querySelectorAll('[data-bom]').forEach((s) => (map[s.dataset.bom] = s.value));
@@ -737,6 +747,7 @@
     const firstImport = !Store.rows('orders').length;
     let order = cols.length;
     const colFor = headers.map((h, i) => {
+      if (/^עמודה \d+$/.test(h) && !data.some((r) => r[i] !== '' && r[i] != null)) return null; // עמודה ריקה בלי כותרת
       let c = byName.get(D.norm(h));
       if (!c) {
         const values = data.map((r) => r[i]);
@@ -754,6 +765,7 @@
     let maxO = Store.rows('orders').reduce((a, r) => Math.max(a, r.o || 0), 0);
     let created = 0, updated = 0;
     if (mode === 'replace') for (const r of Store.rows('orders')) { r.deleted = true; Store.touch(r); }
+    keyIdx = keyIdx.filter((i) => colFor[i]);
     const keyOf = (vals) => keyIdx.map((i) => D.norm(vals(i))).join('¦');
     const index = new Map();
     if (mode === 'upsert') for (const r of Store.rows('orders')) { const k = keyOf((i) => r.c[colFor[i].id]); if (k.replace(/¦/g, '')) index.set(k, r); }
@@ -764,12 +776,12 @@
       let row = mode === 'upsert' ? index.get(keyOf((i) => line[i])) : null;
       if (row) {
         let changed = false;
-        colFor.forEach((c, i) => { const v = convert(c, line[i]); if ((row.c[c.id] ?? '') !== v) { row.c[c.id] = v; changed = true; } });
+        colFor.forEach((c, i) => { if (!c) return; const v = convert(c, line[i]); if ((row.c[c.id] ?? '') !== v) { row.c[c.id] = v; changed = true; } });
         if (changed) { Store.touch(row); updated++; }
       } else {
         row = { id: Store.uid(), c: {}, o: ++maxO, createdAt: Store.now() };
         if (firstImport || mode === 'replace') row.imp = 1;
-        colFor.forEach((c, i) => { row.c[c.id] = convert(c, line[i]); });
+        colFor.forEach((c, i) => { if (c) row.c[c.id] = convert(c, line[i]); });
         if (p && m.project && !row.c[m.project]) row.c[m.project] = p.name;
         Store.touch(row); dsObj.rows.push(row); created++;
       }
@@ -808,6 +820,7 @@
       const extra = [];
       headers.forEach((h, i) => {
         if (used.has(i)) return;
+        if (/^עמודה \d+$/.test(h) && !data.some((r) => r[i] !== '' && r[i] != null)) return;
         let c = byName.get(D.norm(h));
         if (!c) { const vals = data.map((r) => r[i]); c = { id: 'bx' + Store.uid(), name: h, type: guessType(h, vals), width: guessWidth(h, vals), order: order++ }; Store.touch(c); ds.columns.push(c); byName.set(D.norm(h), c); }
         if (!Object.values(bm).includes(c.id)) extra.push([i, c]);
