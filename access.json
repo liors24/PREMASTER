@@ -1,0 +1,17 @@
+{
+ "v": 1,
+ "users": [
+  {
+   "s": "2eLX0ZA6RPNv+yP0pNAZCg==",
+   "i": "l+ezTIHNDf7Gy8e1",
+   "c": "QV0MfuZFMcw7BpZGYfwuoVoW36gtgAt984xXmTNcrLK8xchmu60LQ9wlmLdHJ1b5kEM/xm+vKM+4ljzU6+/kaRX3bH1jcStJK9vGI4M+NoK1Pq8DLXO1iZUwA9oyXgUJULzwdsuMAaNYLUw4Rg==",
+   "u": "154c5ab2435eb5f34c323dd48932294dd7289f79c7f20773243b09e57e1a3b9a"
+  }
+ ],
+ "data": {
+  "owner": "liors24",
+  "repo": "procurement-data",
+  "branch": "main",
+  "path": "data/procurement-db.json.gz"
+ }
+}
