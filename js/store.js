@@ -388,6 +388,8 @@
       window.addEventListener('online', () => syncNow());
     },
     syncNow,
+    /** שמירה מקומית מיידית (למשל בסיום ייבוא) */
+    flush() { return cacheLocal(true); },
 
     /** כל שינוי בנתונים עובר כאן: מעדכן את המטמון ומתזמן שמירה */
     commit() {

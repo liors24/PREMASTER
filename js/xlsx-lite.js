@@ -76,7 +76,9 @@
     return d.toISOString().slice(0, 10);
   }
 
-  async function readXlsx(buf) {
+  const tick = () => new Promise((ok) => setTimeout(ok, 0));
+  async function readXlsx(buf, onp = () => {}) {
+    onp(0.02, 'פותח את הקובץ');
     const zip = await unzip(buf);
     // מציאת קובץ ה-workbook לפי _rels/.rels (יש קבצים שבהם השם שונה)
     let wbPath = 'xl/workbook.xml';
@@ -94,12 +96,17 @@
     for (const r of tags(rels, 'Relationship')) relMap[r.getAttribute('Id')] = r.getAttribute('Target');
 
     const shared = [];
+    onp(0.08, 'מחלץ את הטקסטים');
     const ssText = await zip.text(baseDir + 'sharedStrings.xml');
+    onp(0.15, 'מפענח טקסטים');
     if (ssText) {
       // פענוח מהיר בביטויים רגולריים — מהיר פי כמה מ-DOM בקבצים גדולים
       const siRe = /<(?:\w+:)?si>([\s\S]*?)<\/(?:\w+:)?si>|<(?:\w+:)?si\/>/g;
       let m;
-      while ((m = siRe.exec(ssText))) shared.push(m[1] ? textOf(m[1]) : '');
+      while ((m = siRe.exec(ssText))) {
+        shared.push(m[1] ? textOf(m[1]) : '');
+        if (shared.length % 5000 === 0) { onp(0.15 + 0.1 * (siRe.lastIndex / ssText.length), 'מפענח טקסטים', `${shared.length.toLocaleString('en-US')} ערכים`); await tick(); }
+      }
     }
 
     // זיהוי תאי תאריך לפי סגנון
@@ -120,11 +127,15 @@
     }
 
     const sheets = [];
-    for (const s of tags(wb, 'sheet')) {
+    const sheetEls = tags(wb, 'sheet');
+    let sheetNo = 0;
+    for (const s of sheetEls) {
+      const span = 0.7 / sheetEls.length, base = 0.27 + span * sheetNo++;
       const rid = s.getAttribute('r:id') || s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
       let target = relMap[rid] || '';
       if (target.startsWith('/')) target = target.slice(1);
       else target = baseDir + target;
+      onp(base, `קורא גיליון "${s.getAttribute('name')}"`);
       const text = await zip.text(target);
       if (!text) continue;
       const rows = [];
@@ -161,7 +172,9 @@
           }
         }
         rows[ri] = arr;
+        if (rowCount % 1500 === 0) { onp(base + span * (rowRe.lastIndex / text.length), `קורא גיליון "${s.getAttribute('name')}"`, `${rowCount.toLocaleString('en-US')} שורות`); await tick(); }
       }
+      onp(base + span, `קורא גיליון "${s.getAttribute('name')}"`, `${rowCount.toLocaleString('en-US')} שורות`);
       for (let i = 0; i < rows.length; i++) if (!rows[i]) rows[i] = [];
       sheets.push({ name: s.getAttribute('name'), rows });
     }
@@ -211,26 +224,42 @@
   }
   const ENCRYPTED = 'הקובץ מוגן בסיסמה או בתווית רגישות (הצפנה של Office), ולכן הדפדפן לא יכול לקרוא אותו. פתח אותו באקסל, שמור עותק בלי הגנה (או הסר את תווית הרגישות) ונסה שוב.';
 
-  async function readFile(file) {
+  function readBuffer(file, onp) {
+    return new Promise((ok, fail) => {
+      const fr = new FileReader();
+      fr.onprogress = (e) => { if (e.lengthComputable) onp(e.loaded / e.total); };
+      fr.onload = () => ok(fr.result);
+      fr.onerror = () => fail(new Error('לא הצלחתי לקרוא את הקובץ מהמחשב.'));
+      fr.readAsArrayBuffer(file);
+    });
+  }
+  /** onp(שבר 0..1, שלב, פירוט) — לדיווח התקדמות */
+  async function readFile(file, onp = () => {}) {
     const name = file.name.toLowerCase();
+    const mb = (file.size / 1048576).toFixed(1) + 'MB';
     if (/\.(csv|tsv|txt)$/.test(name)) {
-      const buf = await file.arrayBuffer();
+      const buf = await readBuffer(file, (f) => onp(f * 0.6, 'טוען את הקובץ', mb));
       let text = new TextDecoder('utf-8').decode(buf);
       if (text.includes('\uFFFD')) text = new TextDecoder('windows-1255').decode(buf); // CSV עברי ישן מאקסל
       text = text.replace(/^\uFEFF/, '');
+      onp(0.7, 'מפענח שורות');
+      await tick();
       return [{ name: file.name, rows: parseCSV(text) }];
     }
-    const buf = await file.arrayBuffer();
+    const buf = await readBuffer(file, (f) => onp(f * 0.15, 'טוען את הקובץ', mb));
     const u8 = new Uint8Array(buf);
     if (!u8.length) throw new Error('הקובץ ריק.');
     const isZip = u8[0] === 0x50 && u8[1] === 0x4b;
     const isCFB = u8[0] === 0xd0 && u8[1] === 0xcf && u8[2] === 0x11 && u8[3] === 0xe0;
     if (isCFB && /\.xls[xmb]$/.test(name)) throw new Error(ENCRYPTED); // xlsx עטוף בהצפנה
     if (isZip && typeof DecompressionStream !== 'undefined') {
-      try { return await readXlsx(buf); }
+      try { return await readXlsx(buf, (f, st, d) => onp(0.15 + f * 0.85, st, d)); }
       catch (e) { console.warn('xlsx-lite failed, trying SheetJS', e); }
     }
-    return viaSheetJS(buf);
+    onp(0.3, 'טוען רכיב קריאה לקבצים ישנים');
+    const out = await viaSheetJS(buf);
+    onp(1, 'הקובץ נקרא');
+    return out;
   }
 
   /* ---------------- ZIP write ---------------- */

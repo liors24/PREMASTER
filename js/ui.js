@@ -44,6 +44,8 @@
     wand: '<path d="M15 4V2M15 10V8M19 6h2M9 6h2M17.8 3.2l1.4-1.4M17.8 8.8l1.4 1.4M3 21l12-12"/>',
     grip: '<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>',
     link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
     box: '<path d="M21 8l-9-5-9 5 9 5zM3 8v8l9 5 9-5V8M12 13v8"/>',
   };
   const icon = (name, size = 16) => `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`;
@@ -169,5 +171,49 @@
     return () => { el.classList.remove('in'); setTimeout(() => el.remove(), 200); };
   }
 
-  global.UI = { esc, icon, toast, menu, closeMenu, modal, confirm, prompt, busy };
+  /**
+   * מחוון התקדמות לפעולות ארוכות (קריאת אקסל, ייבוא):
+   * set(שבר 0..1, שלב, פירוט) · done(הודעה) · fail()
+   */
+  function progress(title) {
+    const back = document.createElement('div');
+    back.className = 'prog-back';
+    back.innerHTML = `<div class="prog-card" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="${esc(title)}">
+      <div class="prog-ic"><svg viewBox="0 0 100 100" width="46" height="46" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round">${Array.from({ length: 9 }, (_, i) => `<path d="M50 50 C 58 40, 61 26, 56 12" transform="rotate(${i * 40} 50 50)"/>`).join('')}<circle cx="50" cy="50" r="10" fill="currentColor" stroke="none"/></svg>
+        <svg class="prog-ok" viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg></div>
+      <b class="prog-title">${esc(title)}</b>
+      <span class="prog-stage">מתחיל…</span>
+      <div class="prog-bar"><i></i></div>
+      <div class="prog-meta"><span class="prog-detail"></span><b class="prog-pct">0%</b></div>
+    </div>`;
+    document.body.appendChild(back);
+    requestAnimationFrame(() => back.classList.add('in'));
+    const card = back.querySelector('.prog-card');
+    let last = 0;
+    const api = {
+      set(frac, stage, detail) {
+        frac = Math.max(last, Math.min(1, frac)); last = frac;
+        const p = Math.round(frac * 100);
+        back.querySelector('.prog-bar i').style.transform = `scaleX(${frac})`;
+        back.querySelector('.prog-pct').textContent = p + '%';
+        card.setAttribute('aria-valuenow', p);
+        if (stage) back.querySelector('.prog-stage').textContent = stage;
+        if (detail != null) back.querySelector('.prog-detail').textContent = detail;
+        if (global.__progressLog) global.__progressLog.push([p, stage || '']);
+      },
+      done(msg) {
+        return new Promise((ok) => {
+          api.set(1, msg || 'הושלם');
+          card.classList.add('ok');
+          setTimeout(() => { back.classList.remove('in'); setTimeout(() => { back.remove(); ok(); }, 220); }, 700);
+        });
+      },
+      fail() { back.remove(); },
+    };
+    return api;
+  }
+  /** מאפשר לדפדפן לצייר בין מנות עבודה */
+  const yieldUI = () => new Promise((ok) => setTimeout(ok, 0));
+
+  global.UI = { esc, icon, toast, menu, closeMenu, modal, confirm, prompt, busy, progress, yieldUI };
 })(window);

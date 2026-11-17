@@ -22,6 +22,30 @@
   };
   const rowHeight = () => DENSITY[S.density] || 36;
 
+  /* ================= מצב כהה ================= */
+  const Theme = {
+    current() { return document.documentElement.dataset.theme || 'light'; },
+    apply(t) {
+      document.documentElement.dataset.theme = t;
+      document.querySelector('meta[name=theme-color]')?.setAttribute('content', t === 'dark' ? '#0A1320' : '#13263B');
+      document.querySelectorAll('.theme-btn').forEach((b) => (b.innerHTML = icon(t === 'dark' ? 'sun' : 'moon', 18)));
+    },
+    toggle(btn) {
+      const next = this.current() === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('pt.theme', next);
+      const r = btn ? btn.getBoundingClientRect() : { left: innerWidth / 2, top: 0, width: 0, height: 0 };
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      // מעבר בגל עגול מהכפתור (בדפדפנים שתומכים)
+      if (document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        document.documentElement.style.setProperty('--vt-x', x + 'px');
+        document.documentElement.style.setProperty('--vt-y', y + 'px');
+        document.startViewTransition(() => this.apply(next));
+      } else this.apply(next);
+      if (S.route.sub === 'dashboard' || S.route.sub === 'overview') setTimeout(() => renderMain(false), 10);
+    },
+  };
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => { if (!localStorage.getItem('pt.theme')) Theme.apply(e.matches ? 'dark' : 'light'); });
+
   /* ================= הפעלה ================= */
   async function start() {
     readConnectLink();
@@ -104,6 +128,7 @@
         <div class="gate-caption"><b>מעקב הזמנות רכש</b><span>${Store.cfg.mode === 'github' ? 'מחובר ל-' + esc(Store.cfg.owner + '/' + Store.cfg.repo) : 'מצב ניסיון מקומי'}</span></div>
       </section>
       <section class="gate-form">
+        <button class="icon-btn theme-btn gate-theme" type="button" data-theme-toggle aria-label="מצב כהה / בהיר">${icon(Theme.current() === 'dark' ? 'sun' : 'moon', 18)}</button>
         <form class="card form-card" id="authForm" autocomplete="on">
           <div class="seg" role="tablist">
             <button type="button" role="tab" data-m="login" class="${mode === 'login' ? 'on' : ''}">כניסה</button>
@@ -124,6 +149,7 @@
       </section>
     </div>`;
     app.querySelectorAll('[data-m]').forEach((b) => b.addEventListener('click', () => renderAuth(b.dataset.m)));
+    $('[data-theme-toggle]').addEventListener('click', (e) => Theme.toggle(e.currentTarget));
     $('#toSetup').addEventListener('click', () => renderSetup());
     const f = $('#authForm');
     f.addEventListener('submit', async (e) => {
@@ -153,6 +179,7 @@
         <div class="brand">${fanSvg(26)}<div><b>מעקב הזמנות</b><span>רכש · ${Store.cfg.mode === 'github' ? esc(Store.cfg.repo) : 'מקומי'}</span></div></div>
         <nav class="tabs" id="tabs" role="tablist" aria-label="לשוניות"></nav>
         <div class="top-actions">
+          <button class="icon-btn theme-btn" id="themeBtn" type="button" aria-label="מצב כהה / בהיר" title="מצב כהה / בהיר">${icon(Theme.current() === 'dark' ? 'sun' : 'moon', 18)}</button>
           <button class="sync-pill" id="syncPill" type="button" title="סנכרון"></button>
           <button class="user-btn" id="userBtn" type="button"><span class="avatar">${esc((u.first[0] || '') + (u.last[0] || ''))}</span><span class="uname">${esc(u.first + ' ' + u.last)}</span>${icon('chevron', 14)}</button>
         </div>
@@ -163,6 +190,7 @@
     <div class="drop-zone" id="dropZone" hidden><div class="dz-card">${fanSvg(72)}<b>שחרר כדי לייבא</b><span>קובץ אקסל או CSV</span></div></div>`;
     $('#userBtn').addEventListener('click', (e) => userMenu(e.currentTarget));
     $('#syncPill').addEventListener('click', () => Store.syncNow());
+    $('#themeBtn').addEventListener('click', (e) => Theme.toggle(e.currentTarget));
     D.syncProjects();
     renderTabs();
     renderMain();
@@ -579,13 +607,14 @@
   function importFlow(ds, p) { pickFile(EXCEL_ACCEPT, (file) => importFile(ds, p, file)); }
   async function importFile(ds, p, file) {
     if (/\.json$/i.test(file.name)) return UI.toast('זה קובץ גיבוי. לשחזור גיבוי השתמש בתפריט המשתמש.', 'info', 5000);
-    const busy = UI.busy('קורא את ' + file.name + '…');
+    const prog = UI.progress('קורא את ' + file.name);
     let sheets;
-    try { sheets = await XlsxLite.readFile(file); }
-    catch (e) { busy(); console.error(e); return UI.toast(e.message || 'לא הצלחתי לקרוא את הקובץ.', 'error', 9000); }
-    busy();
+    try { sheets = await XlsxLite.readFile(file, (f, st, d) => prog.set(f * 0.98, st, d)); }
+    catch (e) { prog.fail(); console.error(e); return UI.toast(e.message || 'לא הצלחתי לקרוא את הקובץ.', 'error', 9000); }
     sheets = sheets.filter((s) => s.rows.some((r) => r && r.some((v) => v !== '' && v != null)));
-    if (!sheets.length) return UI.toast('לא נמצאו נתונים בקובץ.', 'error');
+    if (!sheets.length) { prog.fail(); return UI.toast('לא נמצאו נתונים בקובץ.', 'error'); }
+    const total = sheets.reduce((a, s) => a + s.rows.length, 0);
+    await prog.done(`הקובץ נקרא · ${fmtN(total)} שורות`);
     importDialog(ds, p, file.name, sheets);
   }
   function detectHeader(rows) {
@@ -642,7 +671,8 @@
         if (isBom) {
           const map = {}; body.querySelectorAll('[data-bom]').forEach((s) => (map[s.dataset.bom] = s.value));
           if (map.assembly === '' || map.part === '') throw new Error('צריך לבחור לפחות את עמודות המכלול והמק"ט.');
-          importBom(p, data, map, $('[data-replacebom]', body).checked);
+          const rep = $('[data-replacebom]', body).checked;
+          setTimeout(() => importBom(p, data, map, rep).catch((e) => UI.toast(e.message, 'error', 6000)), 0);
         } else {
           const mode = $('[data-mode]', body).value;
           const keys = [...($('[data-key]', body)?.selectedOptions || [])].map((o) => +o.value);
@@ -667,6 +697,13 @@
     return Math.round(Math.max(80, Math.min(300, w)));
   }
   async function importOrders(headers, data, mode, keyIdx, p) {
+    const prog = UI.progress(`מייבא ${fmtN(data.length)} שורות`);
+    try { await importOrdersRun(headers, data, mode, keyIdx, p, prog); }
+    catch (e) { prog.fail(); throw e; }
+  }
+  async function importOrdersRun(headers, data, mode, keyIdx, p, prog) {
+    prog.set(0.02, 'מתאים עמודות');
+    await UI.yieldUI();
     const dsObj = Store.db.datasets.orders;
     const cols = Store.columns('orders');
     const byName = new Map(cols.map((c) => [D.norm(c.name), c]));
@@ -693,7 +730,10 @@
     const keyOf = (vals) => keyIdx.map((i) => D.norm(vals(i))).join('¦');
     const index = new Map();
     if (mode === 'upsert') for (const r of Store.rows('orders')) { const k = keyOf((i) => r.c[colFor[i].id]); if (k.replace(/¦/g, '')) index.set(k, r); }
+    prog.set(0.06, 'קולט שורות');
+    let n = 0;
     for (const line of data) {
+      if (++n % 1000 === 0) { prog.set(0.06 + 0.74 * (n / data.length), 'קולט שורות', `${fmtN(n)} מתוך ${fmtN(data.length)}`); await UI.yieldUI(); }
       let row = mode === 'upsert' ? index.get(keyOf((i) => line[i])) : null;
       if (row) {
         let changed = false;
@@ -707,16 +747,26 @@
         Store.touch(row); dsObj.rows.push(row); created++;
       }
     }
+    prog.set(0.82, 'בונה לשוניות פרויקט', `${fmtN(data.length)} שורות`);
+    await UI.yieldUI();
     Store.commit();
-    UI.toast(`ייבוא הושלם: ${created} שורות חדשות${updated ? `, ${updated} עודכנו` : ''}`, 'ok', 4500);
     // לשוניות הפרויקט נבנות אוטומטית מעמודת הפרויקט
     const r = D.syncProjects();
     r.created.forEach((x) => S.newTabs.add(x.id));
     if (r.created.length) setTimeout(() => UI.toast(`נפתחו ${r.created.length} לשוניות פרויקט: ${r.created.map((x) => x.name).join(', ')}`, 'ok', 5000), 400);
     else if (!m.project) setTimeout(() => UI.toast('כדי לפתוח לשוניות פרויקט, סמן ב"עמודות" איזו עמודה מציינת את הפרויקט.', 'info', 6000), 400);
+    prog.set(0.9, 'שומר במכשיר');
+    await Store.flush();
+    prog.set(0.97, 'מציג את הטבלה');
+    await UI.yieldUI();
     renderTabs(); renderMain();
+    await prog.done(`הייבוא הושלם · ${fmtN(created)} חדשות${updated ? ` · ${fmtN(updated)} עודכנו` : ''}`);
+    UI.toast(`ייבוא הושלם: ${fmtN(created)} שורות חדשות${updated ? `, ${fmtN(updated)} עודכנו` : ''}${Store.cfg.mode === 'github' ? ' · מסונכרן לגיטהאב ברקע' : ''}`, 'ok', 4500);
   }
-  function importBom(p, data, map, replace) {
+  async function importBom(p, data, map, replace) {
+    const prog = UI.progress(`מייבא BOM · ${fmtN(data.length)} שורות`);
+    prog.set(0.1, 'קולט שורות');
+    await UI.yieldUI();
     const ds = Store.db.datasets.bom;
     const bm = D.bomMapping();
     if (replace) for (const r of D.bomLines(p)) { r.deleted = true; Store.touch(r); }
@@ -731,8 +781,10 @@
       Store.touch(row); ds.rows.push(row); n++;
     }
     Store.commit();
-    UI.toast(`נקלטו ${n} שורות BOM`, 'ok');
+    prog.set(0.85, 'שומר במכשיר');
+    await Store.flush();
     renderMain();
+    await prog.done(`נקלטו ${fmtN(n)} שורות BOM`);
   }
 
   /* ================= ייצוא ================= */
