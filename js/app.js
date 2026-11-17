@@ -228,6 +228,16 @@
     const acc = await Store.fetchAccess(true).catch(() => null);
     if (acc && !acc.team) teamCodeDialog(true);
   }
+  /** מכשיר מחובר שבו למשתמש עוד אין כניסה מכל מכשיר (למשל אחרי חיבור בקישור) — משלימים פעם אחת */
+  let remoteChecked = false;
+  async function checkRemoteSetup() {
+    if (remoteChecked) return; remoteChecked = true;
+    const u = Store.currentUser(); if (!u) return;
+    if (S.pw) return ensureRemoteLogin();
+    const has = await Store.hasRemoteLogin(u).catch(() => true);
+    if (!has) await afterConnect().catch(remoteErr);
+    else { const acc = await Store.fetchAccess().catch(() => null); if (acc && !acc.team) teamCodeDialog(true); }
+  }
   async function teamCodeDialog(first) {
     const code = await UI.prompt('קוד צוות', `${first ? 'הגדר קוד צוות: עורכים חדשים יזינו אותו פעם אחת בהרשמה ממכשיר חדש. ' : ''}לפחות 6 תווים. מי שכבר רשום לא צריך אותו.`, '', 'שמירת קוד');
     if (!code) return;
@@ -263,6 +273,7 @@
     renderMain();
     updateSync();
     bindDrop();
+    if (Store.remoteReady) setTimeout(checkRemoteSetup, 900);
   }
   const FIXED = ['home', 'main', 'bom'];
   const DEFAULT_SUB = { home: 'home', main: 'orders', bom: 'bomtable' };
