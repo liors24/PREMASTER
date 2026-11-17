@@ -18,6 +18,7 @@
     newDays: 7,
     density: localStorage.getItem('pt.density') || 'normal',
     expanded: null,
+    newTabs: new Set(),
   };
   const rowHeight = () => DENSITY[S.density] || 36;
 
@@ -26,7 +27,7 @@
     readConnectLink();
     app.innerHTML = `<div class="boot"><div class="boot-mark">${fanSvg(64)}</div><p>טוען את מערכת המעקב…</p></div>`;
     const r = await Store.init();
-    if (r.needsSetup) return renderSetup();
+    if (r.needsSetup) await Store.connect({ mode: 'local' }); // עובדים מקומית; גיטהאב אפשר לחבר אחר כך
     if (!Store.currentUser()) return renderAuth();
     renderShell();
   }
@@ -42,7 +43,7 @@
 
   /* ================= מסך חיבור ================= */
   function renderSetup(prefill) {
-    const c = prefill || Store.cfg || { owner: '', repo: '', branch: 'main', path: 'data/procurement-db.json', token: '' };
+    const c = Object.assign({ owner: '', repo: '', branch: 'main', path: 'data/procurement-db.json', token: '' }, prefill || (Store.cfg && Store.cfg.mode === 'github' ? Store.cfg : {}));
     app.innerHTML = `
     <div class="gate">
       <section class="gate-art" aria-hidden="true">${fanSvg(340, true)}
@@ -51,7 +52,7 @@
       <section class="gate-form">
         <form class="card form-card" id="setupForm" autocomplete="off">
           <h1>חיבור למאגר הנתונים</h1>
-          <p class="muted">כל ההזמנות נשמרות בקובץ אחד במאגר גיטהאב שלך, וכל מי שמחובר רואה את אותם נתונים ומתעדכן אוטומטית.</p>
+          <p class="muted">חיבור למאגר גיטהאב מסנכרן את הנתונים בין כל המכשירים והעורכים. הנתונים שכבר הזנת במכשיר הזה יעברו למאגר אוטומטית.</p>
           <div class="grid2">
             <label class="field"><span>שם משתמש בגיטהאב</span><input name="owner" required value="${esc(c.owner)}" dir="ltr" placeholder="my-user"></label>
             <label class="field"><span>שם המאגר לנתונים</span><input name="repo" required value="${esc(c.repo)}" dir="ltr" placeholder="procurement-data"></label>
@@ -66,7 +67,7 @@
             <li>מומלץ שמאגר הנתונים יהיה <b>פרטי (Private)</b>.</li></ol></details>
           <div class="form-actions">
             <button class="btn btn-primary" type="submit">${icon('link', 16)}<span>בדיקה וחיבור</span></button>
-            <button class="btn btn-ghost" type="button" id="localMode">${icon('box', 16)}<span>ניסיון מקומי בלי גיטהאב</span></button>
+            <button class="btn btn-ghost" type="button" id="localMode">${icon('box', 16)}<span>${Store.cfg && Store.cfg.mode === 'github' ? 'חזרה' : 'המשך בלי גיטהאב'}</span></button>
           </div>
           <p class="form-msg" role="alert"></p>
         </form>
@@ -87,7 +88,10 @@
       } catch (err) { msg.className = 'form-msg err'; msg.textContent = err.message; }
       finally { btn.disabled = false; }
     });
-    $('#localMode').addEventListener('click', async () => { await Store.connect({ mode: 'local' }); renderAuth(); });
+    $('#localMode').addEventListener('click', async () => {
+      if (!Store.cfg) await Store.connect({ mode: 'local' });
+      Store.currentUser() ? renderShell() : renderAuth();
+    });
   }
 
   /* ================= הרשמה וכניסה ================= */
@@ -155,12 +159,15 @@
       </header>
       <main class="main" id="main"></main>
       <footer class="statusbar" id="statusbar"></footer>
-    </div>`;
+    </div>
+    <div class="drop-zone" id="dropZone" hidden><div class="dz-card">${fanSvg(72)}<b>שחרר כדי לייבא</b><span>קובץ אקסל או CSV</span></div></div>`;
     $('#userBtn').addEventListener('click', (e) => userMenu(e.currentTarget));
     $('#syncPill').addEventListener('click', () => Store.syncNow());
+    D.syncProjects();
     renderTabs();
     renderMain();
     updateSync();
+    bindDrop();
   }
   function go(tab, sub) {
     S.route = { tab, sub: sub || (tab === 'main' ? 'orders' : (S.route.tab === tab ? S.route.sub : 'dashboard')) };
@@ -178,7 +185,7 @@
     for (const p of projects) {
       const n = D.projectRows(p).length;
       const locked = !Store.isUnlocked(p.id);
-      h += `<button class="tab ${S.route.tab === p.id ? 'on' : ''}" data-tab="${p.id}" role="tab" style="--pc:${p.color}"><i class="pdot"></i><span>${esc(p.name)}</span>${locked ? `<span class="lock" title="נעול">${icon('lock', 12)}</span>` : `<em>${n}</em>`}</button>`;
+      h += `<button class="tab ${S.route.tab === p.id ? 'on' : ''}${S.newTabs.has(p.id) ? ' pop' : ''}" data-tab="${p.id}" role="tab" style="--pc:${p.color}"><i class="pdot"></i><span>${esc(p.name)}</span>${locked ? `<span class="lock" title="נעול">${icon('lock', 12)}</span>` : `<em>${n}</em>`}</button>`;
     }
     h += `<button class="tab tab-add" id="addProject" title="פרויקט חדש" aria-label="פרויקט חדש">${icon('plus', 16)}</button>`;
     el.innerHTML = h;
@@ -187,6 +194,7 @@
       if (b.dataset.tab !== 'main') b.addEventListener('contextmenu', (e) => { e.preventDefault(); projectMenu(b.dataset.tab, e.clientX, e.clientY); });
     });
     $('#addProject').addEventListener('click', addProjectFlow);
+    setTimeout(() => S.newTabs.clear(), 1200);
     const on = el.querySelector('.tab.on'); on && on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 
@@ -196,7 +204,9 @@
     try {
       const p = D.addProject(name);
       Store.unlock(p.id);
+      S.newTabs.add(p.id);
       if (!D.mapping().project) UI.toast('כדי לשייך שורות לפרויקט, הגדר איזו עמודה היא "פרויקט" בהגדרות העמודות.', 'info', 6000);
+      else UI.toast('הלשונית תתמלא אוטומטית בהזמנות שבעמודת הפרויקט כתוב בהן השם שלה.', 'info', 5000);
       go(p.id, 'dashboard');
     } catch (e) { UI.toast(e.message, 'error'); }
   }
@@ -209,10 +219,7 @@
       { label: 'הזזה ימינה', icon: 'chevron', action: () => moveProject(p, -1) },
       { label: 'הזזה שמאלה', icon: 'chevron', action: () => moveProject(p, 1) },
       { sep: true },
-      { label: 'מחיקת לשונית', icon: 'trash', danger: true, action: async () => {
-        if (!(await UI.confirm('מחיקת לשונית פרויקט', `הלשונית "${p.name}" תוסר. ההזמנות עצמן נשארות בטבלה המרכזית.`, 'מחיקה', true))) return;
-        p.deleted = true; Store.touch(p); Store.commit(); go('main');
-      } },
+      { label: D.projectRows(p).length ? 'הלשונית יורדת לבד כשאין לה הזמנות' : 'הסרת הלשונית', icon: 'trash', danger: true, disabled: D.projectRows(p).length > 0, action: () => { p.deleted = true; Store.touch(p); Store.commit(); go('main'); } },
     ]);
   }
   function moveProject(p, d) {
@@ -223,17 +230,24 @@
     Store.commit(); renderTabs();
   }
   async function renameProject(p) {
-    const name = await UI.prompt('שינוי שם פרויקט', 'שם חדש ללשונית (הוא גם הסיסמה שלה)', p.name);
+    const name = await UI.prompt('שינוי שם פרויקט', 'שם חדש ללשונית. השם יתעדכן גם בכל ההזמנות של הפרויקט, והוא גם הסיסמה של הלשונית.', p.name);
     if (!name || name === p.name) return;
     if (Store.projects().some((q) => q !== p && D.norm(q.name) === D.norm(name))) return UI.toast('כבר קיים פרויקט בשם הזה.', 'error');
-    const m = D.mapping();
-    const rows = D.projectRows(p);
-    let update = false;
-    if (m.project && rows.length) update = await UI.confirm('עדכון השורות', `לעדכן גם את ${rows.length} ההזמנות של הפרויקט כך שעמודת הפרויקט תהיה "${name}"? בלי זה הן לא יופיעו בלשונית.`, 'עדכון השורות');
-    if (update) rows.forEach((r) => { r.c[m.project] = name; Store.touch(r); });
-    p.name = name; Store.touch(p); Store.commit();
+    const n = D.renameProject(p, name);
     renderTabs(); renderMain();
-    UI.toast('שם הפרויקט עודכן. הסיסמה של הלשונית היא עכשיו השם החדש.', 'ok');
+    UI.toast(`שם הפרויקט עודכן${n ? ` ב-${n} הזמנות` : ''}. הסיסמה של הלשונית היא עכשיו השם החדש.`, 'ok', 4500);
+  }
+  /** אחרי כל שינוי בהזמנות: יישור הלשוניות לעמודת הפרויקט */
+  function afterOrdersChange() {
+    const before = currentProject();
+    const r = D.syncProjects();
+    r.created.forEach((x) => S.newTabs.add(x.id));
+    if (r.created.length) UI.toast(`נפתחה לשונית חדשה: ${r.created.map((x) => x.name).join(', ')}`, 'ok');
+    renderTabs();
+    if (!r.changed) return;
+    if (S.route.tab !== 'main' && !currentProject()) { UI.toast('הפרויקט כבר לא מופיע בטבלה, לכן הלשונית שלו הוסרה.', 'info', 5000); return go('main'); }
+    if (before) { const h = $('.vh-title h1'); if (h) h.textContent = before.name; }
+    S.grid && S.grid.refresh(true);
   }
 
   function userMenu(btn) {
@@ -241,11 +255,11 @@
     const u = Store.currentUser();
     UI.menu(r.right, r.bottom + 6, [
       { title: `${u.first} ${u.last}` },
-      Store.cfg.mode === 'github' ? { label: 'קישור חיבור למכשיר נוסף', icon: 'link', action: shareLink } : null,
+      Store.cfg.mode === 'github' ? { label: 'קישור חיבור למכשיר נוסף', icon: 'link', action: shareLink } : { label: 'חיבור לגיטהאב (סנכרון בין מכשירים)', icon: 'cloud', action: () => renderSetup() },
       { label: 'עורכים רשומים', icon: 'user', action: usersDialog },
       { label: 'גיבוי נתונים (JSON)', icon: 'download', action: () => download(new Blob([Store.exportJson()], { type: 'application/json' }), `procurement-backup-${D.today()}.json`) },
       { label: 'שחזור ממגיבוי…', icon: 'upload', action: () => pickFile('.json', async (f) => { Store.importJson(await f.text()); renderTabs(); renderMain(); UI.toast('הגיבוי מוזג לנתונים', 'ok'); }) },
-      { label: 'הגדרות חיבור', icon: 'settings', action: () => renderSetup() },
+      Store.cfg.mode === 'github' ? { label: 'הגדרות חיבור', icon: 'settings', action: () => renderSetup() } : null,
       { sep: true },
       { label: 'יציאה', icon: 'logout', action: () => { Store.logout(); renderAuth('login'); } },
     ]);
@@ -277,6 +291,7 @@
     const map = { synced: ['cloud', 'מסונכרן'], saving: ['refresh', 'שומר…'], offline: ['cloudOff', 'לא מקוון'], error: ['alert', 'שגיאת סנכרון'], local: ['box', 'שמירה מקומית'], idle: ['cloud', ''] };
     const [ic, txt] = map[s.status] || map.idle;
     el.className = 'sync-pill s-' + s.status;
+    document.body.classList.toggle('syncing', s.status === 'saving');
     el.innerHTML = icon(ic, 15) + `<span>${txt}</span>`;
     el.title = s.message + (s.lastSync ? ` · עדכון אחרון ${new Date(s.lastSync).toLocaleTimeString('he-IL')}` : '');
   }
@@ -288,13 +303,15 @@
   function onRemote() {
     if (!$('#main')) return;
     if (!Store.currentUser()) return;
+    D.syncProjects();
     renderTabs();
-    if (S.grid && S.route.sub !== 'dashboard') { S.grid.refresh(true); if (S.route.sub === 'bom') renderBomSummary(); }
-    else renderMain();
+    if (S.route.tab !== 'main' && !currentProject()) return go('main');
+    if (S.grid && S.route.sub !== 'dashboard') { S.grid.refresh(true, true); if (S.route.sub === 'bom') renderBomSummary(); }
+    else renderMain(false);
   }
 
   /* ================= אזור ראשי ================= */
-  function renderMain() {
+  function renderMain(anim = true) {
     const main = $('#main'); if (!main) return;
     if (S.grid) { S.grid.destroy(); S.grid = null; }
     const p = currentProject();
@@ -309,7 +326,7 @@
         <div class="vh-title">${p ? `<i class="pdot lg" style="--pc:${p.color}"></i><h1>${esc(p.name)}</h1>` : '<h1>טבלה מרכזית</h1>'}</div>
         <div class="seg sub" role="tablist">${subs.map(([k, ic, l]) => `<button type="button" role="tab" data-sub="${k}" class="${S.route.sub === k ? 'on' : ''}">${icon(ic, 15)}<span>${l}</span></button>`).join('')}</div>
       </div>
-      <div class="view" id="view"></div>`;
+      <div class="view${anim ? ' enter' : ' static'}" id="view"></div>`;
     main.querySelectorAll('[data-sub]').forEach((b) => b.addEventListener('click', () => go(S.route.tab, b.dataset.sub)));
     const v = $('#view');
     if (S.route.sub === 'orders') renderOrders(v, p);
@@ -317,6 +334,7 @@
     else if (S.route.sub === 'bom') renderBom(v, p);
     else if (S.route.sub === 'overview') renderOverview(v);
     if (S.route.sub !== 'orders' && S.route.sub !== 'bom') setStatus('');
+    countUp(v, anim);
   }
 
   function renderLock(main, p) {
@@ -331,7 +349,7 @@
     f.addEventListener('submit', (e) => {
       e.preventDefault();
       if (D.norm(f.pw.value) === D.norm(p.name)) { Store.unlock(p.id); renderTabs(); renderMain(); }
-      else { $('.form-msg', f).textContent = 'הסיסמה שגויה.'; f.pw.select(); }
+      else { $('.form-msg', f).textContent = 'הסיסמה שגויה.'; f.pw.select(); f.classList.remove('shake'); void f.offsetWidth; f.classList.add('shake'); }
     });
     setStatus('');
   }
@@ -364,7 +382,7 @@
       <div class="grid-area" id="gridArea"></div>`;
     const area = $('#gridArea');
     if (!hasCols) {
-      area.innerHTML = `<div class="empty-state">${fanSvg(90)}<h2>מתחילים מקובץ האקסל</h2><p>ייבא את קובץ מעקב ההזמנות. כותרות העמודות ייקלטו כמו שהן, והמערכת תזהה לבד את עמודות הפרויקט, הסטטוס, המק"ט ותאריך האספקה.</p>
+      area.innerHTML = `<div class="empty-state">${fanSvg(90)}<h2>מתחילים מקובץ האקסל</h2><p>ייבא את קובץ מעקב ההזמנות — בכפתור או בגרירת הקובץ לכאן. כותרות העמודות ייקלטו כמו שהן, המערכת תזהה לבד את עמודות הפרויקט, הסטטוס, המק"ט ותאריך האספקה, ותפתח לשונית לכל פרויקט.</p>
         <div class="form-actions center"><button class="btn btn-primary" id="imp2">${icon('upload', 16)}<span>ייבוא קובץ אקסל</span></button><button class="btn btn-ghost" id="blank">${icon('table', 16)}<span>טבלה ריקה</span></button></div></div>`;
       $('#imp2').onclick = () => importFlow('orders', p);
       $('#blank').onclick = () => { createDefaultColumns(); renderMain(); };
@@ -381,7 +399,7 @@
       colRole: (id) => D.roleOf(id),
       decorate: decorateOrder(p),
       onStats: (s) => setStatus(statsText(s)),
-      onChange: () => renderTabs(),
+      onChange: afterOrdersChange,
       onFilter: () => renderChips(),
       columnMenuExtra: (col) => [{ label: 'תפקיד העמודה…', icon: 'link', action: () => columnsDialog(col.id) }],
       emptyHtml: p
@@ -515,7 +533,7 @@
           const role = $('[data-role]', el).value; if (role) mapping[role] = id;
         });
         Store.db.settings.mapping = mapping; Store.db.settings.updatedAt = Store.now();
-        Store.commit(); renderTabs(); renderMain();
+        Store.commit(); D.syncProjects(); renderTabs(); renderMain();
       } }],
     });
     if (focusId) setTimeout(() => { const f = body.querySelector('.col-row.focus [data-role]'); f && f.focus(); }, 80);
@@ -548,20 +566,27 @@
   }
 
   /* ================= ייבוא ================= */
+  const EXCEL_ACCEPT = '.xlsx,.xlsm,.xls,.xlsb,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.ms-excel.sheet.macroEnabled.12,text/csv';
   function pickFile(accept, cb) {
-    const i = document.createElement('input'); i.type = 'file'; i.accept = accept;
-    i.onchange = () => i.files[0] && cb(i.files[0]);
+    // השדה חייב להיות בתוך הדף — בחלק מהדפדפנים (במיוחד באייפון) אחרת הבחירה לא נקלטת
+    const i = document.createElement('input');
+    i.type = 'file'; i.accept = accept;
+    i.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
+    document.body.appendChild(i);
+    i.addEventListener('change', () => { const f = i.files && i.files[0]; i.remove(); if (f) cb(f); });
     i.click();
   }
-  function importFlow(ds, p) {
-    pickFile('.xlsx,.xlsm,.xls,.csv', async (file) => {
-      let sheets;
-      try { sheets = await XlsxLite.readFile(file); }
-      catch (e) { return UI.toast(e.message || 'לא הצלחתי לקרוא את הקובץ.', 'error', 6000); }
-      sheets = sheets.filter((s) => s.rows.some((r) => r && r.some((v) => v !== '' && v != null)));
-      if (!sheets.length) return UI.toast('הקובץ ריק.', 'error');
-      importDialog(ds, p, file.name, sheets);
-    });
+  function importFlow(ds, p) { pickFile(EXCEL_ACCEPT, (file) => importFile(ds, p, file)); }
+  async function importFile(ds, p, file) {
+    if (/\.json$/i.test(file.name)) return UI.toast('זה קובץ גיבוי. לשחזור גיבוי השתמש בתפריט המשתמש.', 'info', 5000);
+    const busy = UI.busy('קורא את ' + file.name + '…');
+    let sheets;
+    try { sheets = await XlsxLite.readFile(file); }
+    catch (e) { busy(); console.error(e); return UI.toast(e.message || 'לא הצלחתי לקרוא את הקובץ.', 'error', 9000); }
+    busy();
+    sheets = sheets.filter((s) => s.rows.some((r) => r && r.some((v) => v !== '' && v != null)));
+    if (!sheets.length) return UI.toast('לא נמצאו נתונים בקובץ.', 'error');
+    importDialog(ds, p, file.name, sheets);
   }
   function detectHeader(rows) {
     let best = 0, bestN = -1;
@@ -684,29 +709,12 @@
     }
     Store.commit();
     UI.toast(`ייבוא הושלם: ${created} שורות חדשות${updated ? `, ${updated} עודכנו` : ''}`, 'ok', 4500);
-    // פרויקטים חדשים מתוך עמודת הפרויקט
-    if (m.project) {
-      const names = new Map();
-      for (const r of Store.rows('orders')) { const v = String(r.c[m.project] ?? '').trim(); if (v) names.set(D.norm(v), v); }
-      const existingP = new Set(Store.projects().map((x) => D.norm(x.name)));
-      const fresh = [...names.entries()].filter(([k]) => !existingP.has(k)).map(([, v]) => v);
-      if (fresh.length) await offerProjects(fresh);
-    }
+    // לשוניות הפרויקט נבנות אוטומטית מעמודת הפרויקט
+    const r = D.syncProjects();
+    r.created.forEach((x) => S.newTabs.add(x.id));
+    if (r.created.length) setTimeout(() => UI.toast(`נפתחו ${r.created.length} לשוניות פרויקט: ${r.created.map((x) => x.name).join(', ')}`, 'ok', 5000), 400);
+    else if (!m.project) setTimeout(() => UI.toast('כדי לפתוח לשוניות פרויקט, סמן ב"עמודות" איזו עמודה מציינת את הפרויקט.', 'info', 6000), 400);
     renderTabs(); renderMain();
-  }
-  function offerProjects(names) {
-    return new Promise((res) => {
-      UI.modal({
-        title: 'נמצאו פרויקטים בקובץ',
-        body: `<p class="muted">לבחור לאילו פרויקטים לפתוח לשונית. כל לשונית תציג אוטומטית את ההזמנות שלה, והסיסמה שלה תהיה שם הפרויקט.</p>
-          <div class="filter-list">${names.map((n) => `<label class="chk"><input type="checkbox" value="${esc(n)}" checked><span>${esc(n)}</span></label>`).join('')}</div>`,
-        actions: [{ label: 'לא עכשיו', action: () => res() }, { label: 'פתיחת לשוניות', primary: true, icon: 'plus', action: (el) => {
-          el.querySelectorAll('input:checked').forEach((i) => { try { const p = D.addProject(i.value); Store.unlock(p.id); } catch { } });
-          res();
-        } }],
-        onClose: () => res(),
-      });
-    });
   }
   function importBom(p, data, map, replace) {
     const ds = Store.db.datasets.bom;
@@ -741,24 +749,57 @@
   }
 
   /* ================= דשבורד ================= */
+  const KPI_IC = { all: 'box', notDone: 'cloud', supplied: 'check', closed: 'lock', delayed: 'alert', new: 'plus' };
+  function kpiCards(tiles, total, clickable = true) {
+    return `<section class="kpis" aria-label="מדדי הזמנות">${tiles.map(([k, l, n, sub], i) => {
+      const share = total ? Math.min(1, n / total) : 0;
+      const tag = clickable ? 'button' : 'div';
+      return `<${tag} class="kpi k-${k}" ${clickable ? `data-cf="${k}" type="button"` : ''} style="--d:${i}">
+        <span class="kpi-top"><span class="kpi-ic">${icon(KPI_IC[k], 17)}</span><span class="kpi-l">${l}</span></span>
+        <b class="kpi-n" data-count="${n}">${fmtN(n)}</b>
+        <span class="kpi-bar" aria-hidden="true"><i style="--w:${(k === 'all' ? 1 : share) * 100}%"></i></span>
+        <span class="kpi-s">${esc(sub || '')}</span></${tag}>`;
+    }).join('')}</section>`;
+  }
+  function ring(pctVal, size, color, label) {
+    const r = size / 2 - 9;
+    return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-track"/>
+      <circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-val${Math.round(pctVal * 100) ? '' : ' zero'}" pathLength="100" style="--v:${Math.round(pctVal * 100)};stroke:${color}" transform="rotate(-90 ${size / 2} ${size / 2})"/>
+    </svg><span class="ring-c"><b data-count="${Math.round(pctVal * 100)}" data-suffix="%">${Math.round(pctVal * 100)}%</b><em>${label}</em></span>`;
+  }
   function renderDashboard(v, p) {
     const m = D.mapping();
     const rows = D.projectRows(p);
     const s = D.stats(rows, S.newDays);
     const bp = D.bomProgress(p);
+    const done = s.supplied + s.closed;
+    const active = s.total - s.cancelled;
+    const delivery = active ? done / active : 0;
     const tiles = [
       ['all', 'הזמנות קיימות', s.total, 'בפרויקט'],
       ['notDone', 'נשארו פתוחות', s.notDone, s.total ? pct(s.notDone / s.total) + ' מההזמנות' : ''],
-      ['supplied', 'סופקו', s.supplied, s.total ? pct(s.supplied / s.total) : ''],
-      ['closed', 'סגורות', s.closed, s.total ? pct(s.closed / s.total) : ''],
+      ['supplied', 'סופקו', s.supplied, s.total ? pct(s.supplied / s.total) + ' מההזמנות' : ''],
+      ['closed', 'סגורות', s.closed, s.total ? pct(s.closed / s.total) + ' מההזמנות' : ''],
       ['delayed', 'בעיכוב / דורש טיפול', s.delayed, m.due ? 'כולל באיחור לפי תאריך' : ''],
       ['new', 'חדשות', s.newer, `ב-${S.newDays} הימים האחרונים`],
     ];
+    const headline = !s.total ? 'עוד אין הזמנות בפרויקט' : s.delayed ? `${s.delayed} הזמנות דורשות טיפול` : 'כל ההזמנות בזמן';
     v.innerHTML = `
       ${!m.project || !m.status ? `<div class="banner">${icon('alert', 16)}<span>${!m.project ? 'לא הוגדרה עמודת פרויקט' : 'לא הוגדרה עמודת סטטוס'} — הדשבורד צריך אותה כדי לספור נכון.</span><button class="btn btn-soft sm" id="fixCols">הגדרת עמודות</button></div>` : ''}
-      <section class="kpis" aria-label="מדדי הזמנות">${tiles.map(([k, l, n, sub]) => `
-        <button class="kpi k-${k}" data-cf="${k}" type="button"><span class="kpi-l">${k !== 'all' && k !== 'notDone' && k !== 'new' ? `<i class="sw c-${k}"></i>` : ''}${l}</span><b class="kpi-n">${fmtN(n)}</b><span class="kpi-s">${esc(sub)}</span></button>`).join('')}
+      <section class="hero" style="--pc:${p.color}">
+        <div class="hero-fan" aria-hidden="true">${fanSvg(420, true)}</div>
+        <div class="hero-txt">
+          <h2>${esc(headline)}</h2>
+          <p>${fmtN(s.total)} הזמנות · ${fmtN(done)} הושלמו · ${fmtN(s.notDone)} פתוחות${bp.count ? ` · ${fmtN(bp.count)} מק"טים ב-BOM` : ''}</p>
+          <div class="hero-meter"><span>התקדמות אספקה</span><div class="hm-bar"><i style="--w:${delivery * 100}%"></i></div><b data-count="${Math.round(delivery * 100)}" data-suffix="%">${pct(delivery)}</b></div>
+        </div>
+        <div class="hero-rings">
+          <div class="ring-box">${ring(delivery, 132, 'var(--st-supplied)', 'אספקות הושלמו')}</div>
+          <div class="ring-box">${ring(bp.overall, 132, '#8FB3FF', bp.count ? 'השלמת BOM' : 'אין BOM עדיין')}</div>
+        </div>
       </section>
+      ${kpiCards(tiles, s.total)}
       <div class="dash-grid">
         <section class="card panel span2">
           <header class="ph"><h2>מצב ההזמנות</h2><div class="seg mini">${[7, 14, 30].map((d) => `<button type="button" data-nd="${d}" class="${S.newDays === d ? 'on' : ''}">${d} ימים</button>`).join('')}</div></header>
@@ -782,7 +823,7 @@
         </section>
       </div>`;
     v.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => { S.route.sub = 'orders'; sessionStorage.setItem('pt.route', JSON.stringify(S.route)); renderMain(); S.catFilter = b.dataset.cf === 'all' ? null : b.dataset.cf; S.grid && (S.grid.refresh(), renderChips()); }));
-    v.querySelectorAll('[data-nd]').forEach((b) => (b.onclick = () => { S.newDays = +b.dataset.nd; renderMain(); }));
+    v.querySelectorAll('[data-nd]').forEach((b) => (b.onclick = () => { S.newDays = +b.dataset.nd; renderMain(false); }));
     v.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => go(p.id, b.dataset.go)));
     v.querySelectorAll('[data-asm]').forEach((b) => (b.onclick = () => asmDialog(p, b.dataset.asm)));
     const fx = $('#fixCols'); fx && (fx.onclick = () => columnsDialog());
@@ -837,19 +878,21 @@
       return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
     };
     let paths = '';
-    if (n === 1) paths = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col[items[0].state]}" stroke-width="9"/>`;
-    else items.forEach((it, i) => { const a0 = i * seg + gap / 2, a1 = (i + 1) * seg - gap / 2; paths += `<path d="${arc(a0, a1)}" fill="none" stroke="${col[it.state]}" stroke-width="9" stroke-linecap="butt"><title>${esc(String(it.part ?? ''))} · ${D.LINE_STATE[it.state].label}</title></path>`; });
+    const track = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" class="fan-track" stroke-width="9"/>`;
+    if (n === 1) paths = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${col[items[0].state]}" stroke-width="9" pathLength="1" class="seg-arc" style="--i:0" transform="rotate(-90 ${cx} ${cy})"/>`;
+    else items.forEach((it, i) => { const a0 = i * seg + gap / 2, a1 = (i + 1) * seg - gap / 2; paths += `<path d="${arc(a0, a1)}" fill="none" stroke="${col[it.state]}" stroke-width="9" stroke-linecap="butt" pathLength="1" class="seg-arc" style="--i:${i}"><title>${esc(String(it.part ?? ''))} · ${D.LINE_STATE[it.state].label}</title></path>`; });
+    paths = track + paths;
     return `<svg class="fan" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">${paths}<circle cx="${cx}" cy="${cy}" r="${r - 13}" class="fan-hub"/></svg>`;
   }
   function bomOverview(bp) {
     const asms = [...bp.assemblies].sort((a, b) => a.pct - b.pct);
     const tot = { done: 0, ordered: 0, late: 0, missing: 0 };
     asms.forEach((a) => Object.keys(tot).forEach((k) => (tot[k] += a.cnt[k])));
-    return `<div class="bom-head"><div class="bom-overall"><b>${pct(bp.overall)}</b><span>השלמה כוללת · ${fmtN(bp.count)} מק"טים ב-${asms.length} מכלולים</span></div>
+    return `<div class="bom-head"><div class="bom-overall"><b data-count="${Math.round(bp.overall * 100)}" data-suffix="%">${pct(bp.overall)}</b><span>השלמה כוללת · ${fmtN(bp.count)} מק"טים ב-${asms.length} מכלולים</span></div>
       <ul class="legend inline">${Object.entries(D.LINE_STATE).map(([k, s]) => `<li><i class="sw ${k === 'missing' ? 'c-missing' : 'c-' + s.cls}"></i><span>${s.label}</span><b>${tot[k]}</b></li>`).join('')}</ul></div>
-      <div class="asm-grid">${asms.map((a) => `
-        <button class="asm" type="button" data-asm="${esc(a.name)}">
-          <div class="asm-g">${fanGauge(a)}<b class="asm-p">${pct(a.pct)}</b></div>
+      <div class="asm-grid">${asms.map((a, i) => `
+        <button class="asm" type="button" data-asm="${esc(a.name)}" style="--d:${i}">
+          <div class="asm-g">${fanGauge(a)}<b class="asm-p" data-count="${Math.round(a.pct * 100)}" data-suffix="%">${pct(a.pct)}</b></div>
           <div class="asm-t"><b>${esc(a.name)}</b><span>${a.cnt.done}/${a.items.length} מק"טים סופקו${a.cnt.late ? ` · <em class="t-late">${a.cnt.late} בעיכוב</em>` : ''}${a.cnt.missing ? ` · ${a.cnt.missing} לא הוזמנו` : ''}</span></div>
         </button>`).join('')}</div>`;
   }
@@ -919,6 +962,7 @@
     const el = $('#bomSummary'); const p = currentProject(); if (!el || !p) return;
     const bp = D.bomProgress(p);
     el.innerHTML = bp.count ? `<section class="card panel">${bomOverview(bp)}</section>` : '';
+    countUp(el, true);
     el.querySelectorAll('[data-asm]').forEach((b) => (b.onclick = () => asmDialog(p, b.dataset.asm)));
   }
 
@@ -927,16 +971,14 @@
     const ps = Store.projects();
     const all = D.stats(Store.rows('orders'), S.newDays);
     v.innerHTML = `
-      <section class="kpis" aria-label="סיכום כללי">
-        ${[['all', 'כל ההזמנות', all.total], ['notDone', 'פתוחות', all.notDone], ['supplied', 'סופקו', all.supplied], ['closed', 'סגורות', all.closed], ['delayed', 'בעיכוב', all.delayed], ['new', 'חדשות', all.newer]].map(([k, l, n]) => `<div class="kpi static k-${k}"><span class="kpi-l">${['supplied', 'closed', 'delayed'].includes(k) ? `<i class="sw c-${k}"></i>` : ''}${l}</span><b class="kpi-n">${fmtN(n)}</b></div>`).join('')}
-      </section>
+      ${kpiCards([['all', 'כל ההזמנות', all.total, `ב-${ps.length} פרויקטים`], ['notDone', 'פתוחות', all.notDone, ''], ['supplied', 'סופקו', all.supplied, ''], ['closed', 'סגורות', all.closed, ''], ['delayed', 'בעיכוב', all.delayed, ''], ['new', 'חדשות', all.newer, `ב-${S.newDays} הימים האחרונים`]], all.total, false)}
       <section class="card panel">
         <header class="ph"><h2>השוואת פרויקטים</h2></header>
         ${ps.length ? `<div class="table-wrap"><table class="ov-table"><thead><tr><th>פרויקט</th><th>הזמנות</th><th>פתוחות</th><th>סופקו</th><th>סגורות</th><th>בעיכוב</th><th>חדשות</th><th class="w-bar">התפלגות</th><th>השלמת BOM</th></tr></thead><tbody>
         ${ps.map((p) => {
           const s = D.stats(D.projectRows(p), S.newDays); const bp = D.bomProgress(p);
           const parts = D.CAT_ORDER.filter((k) => s[k]);
-          return `<tr data-p="${p.id}"><td><span class="ptag" style="--pc:${p.color}"><i class="pdot"></i>${esc(p.name)}</span>${Store.isUnlocked(p.id) ? '' : ` <span class="lock">${icon('lock', 12)}</span>`}</td>
+          return `<tr data-p="${p.id}" style="--d:${ps.indexOf(p)}"><td><span class="ptag" style="--pc:${p.color}"><i class="pdot"></i>${esc(p.name)}</span>${Store.isUnlocked(p.id) ? '' : ` <span class="lock">${icon('lock', 12)}</span>`}</td>
           <td>${s.total}</td><td>${s.notDone}</td><td>${s.supplied}</td><td>${s.closed}</td><td class="${s.delayed ? 't-late' : ''}">${s.delayed}</td><td>${s.newer}</td>
           <td class="w-bar"><div class="stack thin">${parts.map((k) => `<span class="seg-b c-${k}" style="flex:${s[k]}" data-tip="${D.CATS[k].label}: ${s[k]}"></span>`).join('') || '<span class="seg-b c-missing" style="flex:1"></span>'}</div></td>
           <td>${bp.count ? `<div class="pbar"><div style="width:${pct(bp.overall)}"></div></div><b class="pnum">${pct(bp.overall)}</b>` : '<span class="muted">—</span>'}</td></tr>`;
@@ -947,6 +989,58 @@
   }
 
   /* ================= עזרים ================= */
+  const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** מונים שעולים מ-0 לערך — רק בכניסה לתצוגה */
+  function countUp(root, anim) {
+    const els = root.querySelectorAll('[data-count]');
+    if (!anim || reduceMotion()) return;
+    els.forEach((el, i) => {
+      const to = +el.dataset.count; const suf = el.dataset.suffix || '';
+      if (!to) return;
+      const dur = 900, delay = 120 + i * 25, t0 = performance.now() + delay;
+      el.textContent = '0' + suf;
+      const tick = (t) => {
+        const k = Math.min(1, Math.max(0, (t - t0) / dur));
+        const e = 1 - Math.pow(1 - k, 3);
+        el.textContent = fmtN(Math.round(to * e)) + suf;
+        if (k < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    });
+  }
+  /** גל לחיצה על כפתורים וכרטיסים */
+  document.addEventListener('pointerdown', (e) => {
+    const t = e.target.closest('.btn, .kpi[data-cf], .tab, .asm, .seg button, .user-btn, .menu-item');
+    if (!t || reduceMotion()) return;
+    const r = t.getBoundingClientRect();
+    const d = Math.max(r.width, r.height) * 2;
+    const sp = document.createElement('span');
+    sp.className = 'ripple';
+    sp.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px`;
+    t.appendChild(sp);
+    setTimeout(() => sp.remove(), 650);
+  });
+  /** גרירת קובץ אקסל לכל מקום במסך */
+  let dropBound = false;
+  function bindDrop() {
+    if (dropBound) return; dropBound = true;
+    let depth = 0;
+    const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+    const zone = () => $('#dropZone');
+    const canImport = () => { const p = currentProject(); return Store.currentUser() && $('#main') && (!p || Store.isUnlocked(p.id)); };
+    document.addEventListener('dragenter', (e) => { if (!hasFiles(e) || !canImport()) return; depth++; const z = zone(); if (z) { z.hidden = false; requestAnimationFrame(() => z.classList.add('in')); } });
+    document.addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) { const z = zone(); z && (z.classList.remove('in'), (z.hidden = true)); } });
+    document.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+    document.addEventListener('drop', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault(); depth = 0;
+      const z = zone(); z && (z.classList.remove('in'), (z.hidden = true));
+      const f = e.dataTransfer.files[0];
+      if (!f || !canImport()) return;
+      const p = currentProject();
+      importFile(p && S.route.sub === 'bom' ? 'bom' : 'orders', p, f);
+    });
+  }
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
   let tipEl = null;
   function bindTips(root) {

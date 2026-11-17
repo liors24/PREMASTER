@@ -55,7 +55,7 @@
     const t = document.createElement('div');
     t.className = 'toast toast-' + kind;
     t.setAttribute('role', 'status');
-    t.innerHTML = icon(kind === 'error' ? 'alert' : kind === 'ok' ? 'check' : 'cloud', 16) + `<span>${esc(msg)}</span>`;
+    t.innerHTML = icon(kind === 'error' ? 'alert' : kind === 'ok' ? 'check' : 'cloud', 16) + `<span>${esc(msg)}</span><i class="toast-t" style="animation-duration:${ms}ms"></i>`;
     host.appendChild(t);
     requestAnimationFrame(() => t.classList.add('in'));
     setTimeout(() => { t.classList.remove('in'); setTimeout(() => t.remove(), 250); }, ms);
@@ -159,5 +159,15 @@
     });
   }
 
-  global.UI = { esc, icon, toast, menu, closeMenu, modal, confirm, prompt };
+  /** חיווי עבודה ברקע; מחזיר פונקציה שסוגרת אותו */
+  function busy(msg) {
+    const el = document.createElement('div');
+    el.className = 'busy'; el.setAttribute('role', 'status');
+    el.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`;
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('in'));
+    return () => { el.classList.remove('in'); setTimeout(() => el.remove(), 200); };
+  }
+
+  global.UI = { esc, icon, toast, menu, closeMenu, modal, confirm, prompt, busy };
 })(window);

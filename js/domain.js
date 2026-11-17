@@ -106,6 +106,69 @@
     Store.commit();
     return p;
   };
+  /**
+   * סנכרון לשוניות מול עמודת הפרויקט:
+   * ערך חדש בעמודה → לשונית חדשה; שם שהוחלף בכל השורות → הלשונית משנה שם (ושומרת BOM וצבע);
+   * פרויקט שכבר אין לו שורות → הלשונית יורדת (וחוזרת אוטומטית אם השם יופיע שוב).
+   */
+  let membership = new Map(); // rowId -> projectId (בזיכרון בלבד)
+  D.syncProjects = () => {
+    const m = D.mapping();
+    if (!m.project) return { changed: false, created: [] };
+    const rows = Store.rows('orders');
+    const names = new Map(); // norm -> כתיב תצוגה
+    for (const r of rows) { const v = String(r.c[m.project] ?? '').trim(); if (v && !names.has(norm(v))) names.set(norm(v), v); }
+    const all = Store.db.projects;
+    let changed = false; const created = [];
+    // כפילויות שנוצרו במקביל בשני מכשירים: משאירים את הוותיקה
+    const seen = new Map();
+    for (const p of all.filter((x) => !x.deleted).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || (a.id < b.id ? -1 : 1))) {
+      const k = norm(p.name);
+      if (seen.has(k)) {
+        const keep = seen.get(k);
+        for (const b of Store.rows('bom')) if (b.p === p.id) { b.p = keep.id; Store.touch(b); }
+        p.deleted = true; Store.touch(p); changed = true;
+      } else seen.set(k, p);
+    }
+    const active = all.filter((x) => !x.deleted);
+    const byNorm = new Map(active.map((x) => [norm(x.name), x]));
+    let missing = active.filter((x) => !names.has(norm(x.name)) && (x.hadRows || x.auto));
+    for (const [k, display] of names) {
+      if (byNorm.has(k)) { const p = byNorm.get(k); if (!p.hadRows) { p.hadRows = true; Store.touch(p); changed = true; } continue; }
+      // שינוי שם: רוב השורות עם השם החדש היו שייכות לפרויקט שנעלם
+      const votes = new Map();
+      for (const r of rows) {
+        if (norm(r.c[m.project]) !== k) continue;
+        const pid = membership.get(r.id);
+        if (pid && missing.some((x) => x.id === pid)) votes.set(pid, (votes.get(pid) || 0) + 1);
+      }
+      let target = null;
+      if (votes.size) { const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0]; target = missing.find((x) => x.id === best); }
+      if (!target) { target = all.find((x) => x.deleted && norm(x.name) === k) || null; if (target) target.deleted = false; }
+      if (target) {
+        target.name = display; target.hadRows = true; Store.touch(target);
+        missing = missing.filter((x) => x !== target); byNorm.set(k, target); changed = true;
+      } else {
+        const list = Store.projects();
+        const np = { id: Store.uid(), name: display, order: list.length, color: D.PROJECT_COLORS[list.length % D.PROJECT_COLORS.length], createdAt: Store.now(), updatedAt: Store.now(), auto: true, hadRows: true };
+        all.push(np); byNorm.set(k, np); created.push(np); changed = true;
+      }
+    }
+    for (const p of missing) { p.deleted = true; Store.touch(p); changed = true; }
+    membership = new Map();
+    for (const r of rows) { const p = byNorm.get(norm(r.c[m.project])); if (p) membership.set(r.id, p.id); }
+    if (changed) Store.commit();
+    return { changed, created };
+  };
+  /** שינוי שם של לשונית מעדכן גם את השורות שלה */
+  D.renameProject = (p, name) => {
+    const m = D.mapping();
+    const rows = D.projectRows(p);
+    if (m.project) for (const r of rows) { r.c[m.project] = name; Store.touch(r); membership.set(r.id, p.id); }
+    p.name = name; Store.touch(p);
+    Store.commit();
+    return rows.length;
+  };
   D.projectColor = (name) => { const p = Store.projects().find((x) => norm(x.name) === norm(name)); return p ? p.color : null; };
 
   /* ---------- סטטיסטיקה ---------- */

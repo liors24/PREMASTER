@@ -73,6 +73,8 @@
       this.undoStack = []; this.redoStack = [];
       this.editor = null;
       this._raf = 0;
+      this.flashIds = new Set();
+      this.ver = new Map();
       this.build();
       this.refresh();
     }
@@ -120,7 +122,8 @@
       if (this.o.filter) rows = rows.filter(this.o.filter);
       return rows;
     }
-    refresh(keepOrder = false) {
+    /** flash=true: שורות שעודכנו ע"י משתמש אחר מהבהבות לרגע */
+    refresh(keepOrder = false, flash = false) {
       const allCols = Store.columns(this.ds).concat(this.o.virtualCols ? this.o.virtualCols() : []);
       this.allCols = allCols;
       this.cols = allCols.filter((c) => !c.hidden);
@@ -151,6 +154,12 @@
           });
         }
       } else rows.sort((a, b) => (a.o || 0) - (b.o || 0));
+      if (flash) {
+        const me = Store.session && Store.session.userId;
+        for (const r of rows) { const v = this.ver.get(r.id); if (v !== r.updatedAt && (v !== undefined || this.ver.size) && r.by !== me) this.flashIds.add(r.id); }
+        if (this.flashIds.size) { clearTimeout(this._ft); this._ft = setTimeout(() => { this.flashIds.clear(); }, 1400); }
+      }
+      this.ver = new Map(rows.map((r) => [r.id, r.updatedAt]));
       this.view = rows;
       this.layout();
       this.clampSel();
@@ -223,7 +232,7 @@
       for (let i = a; i < b; i++) {
         const row = this.view[i];
         const h = this.rowH(row);
-        html += `<div class="gr${selRows.has(i) ? ' rsel' : ''}" style="top:${this.tops[i]}px;height:${h}px;width:${this.totalW}px" data-r="${i}" role="row">`;
+        html += `<div class="gr${selRows.has(i) ? ' rsel' : ''}${this.flashIds.has(row.id) ? ' flash' : ''}" style="top:${this.tops[i]}px;height:${h}px;width:${this.totalW}px" data-r="${i}" role="row">`;
         html += `<div class="rh${touched.has(i) ? ' hl' : ''}" data-rh="${i}">${i + 1}<span class="rh-rs" data-rrs="${i}"></span></div>`;
         for (let j = 0; j < this.cols.length; j++) {
           const col = this.cols[j];
@@ -710,7 +719,9 @@
           const row = { id: Store.uid(), c: Object.assign({}, this.o.defaults ? this.o.defaults() : {}), o, createdAt: Store.now() };
           if (this.o.rowProps) Object.assign(row, this.o.rowProps());
           before.set(row.id, Object.assign(clone(row), { deleted: true }));
-          Store.touch(row); ds.rows.push(row); return row;
+          Store.touch(row); ds.rows.push(row); this.flashIds.add(row.id);
+          clearTimeout(this._ft); this._ft = setTimeout(() => this.flashIds.clear(), 1400);
+          return row;
         },
       };
       fn(api);

@@ -66,18 +66,28 @@
 
   async function readXlsx(buf) {
     const zip = await unzip(buf);
-    const wb = xml(await zip.text('xl/workbook.xml'));
-    const rels = xml((await zip.text('xl/_rels/workbook.xml.rels')) || '<Relationships/>');
+    // מציאת קובץ ה-workbook לפי _rels/.rels (יש קבצים שבהם השם שונה)
+    let wbPath = 'xl/workbook.xml';
+    const rootRels = await zip.text('_rels/.rels');
+    if (rootRels) {
+      const r = tags(xml(rootRels), 'Relationship').find((x) => /officeDocument$/.test(x.getAttribute('Type') || ''));
+      if (r) wbPath = r.getAttribute('Target').replace(/^\//, '');
+    }
+    const wbText = await zip.text(wbPath);
+    if (!wbText) throw new Error('NOT_XLSX');
+    const baseDir = wbPath.includes('/') ? wbPath.slice(0, wbPath.lastIndexOf('/') + 1) : '';
+    const wb = xml(wbText);
+    const rels = xml((await zip.text(baseDir + '_rels/' + wbPath.split('/').pop() + '.rels')) || '<Relationships/>');
     const relMap = {};
     for (const r of tags(rels, 'Relationship')) relMap[r.getAttribute('Id')] = r.getAttribute('Target');
 
     const shared = [];
-    const ssText = await zip.text('xl/sharedStrings.xml');
+    const ssText = await zip.text(baseDir + 'sharedStrings.xml');
     if (ssText) for (const si of tags(xml(ssText), 'si')) shared.push(tags(si, 't').map((t) => t.textContent).join(''));
 
     // זיהוי תאי תאריך לפי סגנון
     const dateStyles = new Set();
-    const stText = await zip.text('xl/styles.xml');
+    const stText = await zip.text(baseDir + 'styles.xml');
     if (stText) {
       const st = xml(stText);
       const custom = {};
@@ -96,8 +106,8 @@
     for (const s of tags(wb, 'sheet')) {
       const rid = s.getAttribute('r:id') || s.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
       let target = relMap[rid] || '';
-      target = target.replace(/^\//, '');
-      if (!target.startsWith('xl/')) target = 'xl/' + target;
+      if (target.startsWith('/')) target = target.slice(1);
+      else target = baseDir + target;
       const text = await zip.text(target);
       if (!text) continue;
       const doc = xml(text);
@@ -159,23 +169,41 @@
     return rows;
   }
 
+  async function viaSheetJS(buf) {
+    const X = await loadSheetJS();
+    let wb;
+    try { wb = X.read(buf, { type: 'array', cellDates: true }); }
+    catch (e) {
+      if (/password|encrypt/i.test(e.message)) throw new Error(ENCRYPTED);
+      throw new Error('לא הצלחתי לקרוא את הקובץ: ' + e.message);
+    }
+    return wb.SheetNames.map((n) => ({
+      name: n,
+      rows: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }).map((r) => r.map((v) => v instanceof Date ? v.toISOString().slice(0, 10) : v)),
+    }));
+  }
+  const ENCRYPTED = 'הקובץ מוגן בסיסמה או בתווית רגישות (הצפנה של Office), ולכן הדפדפן לא יכול לקרוא אותו. פתח אותו באקסל, שמור עותק בלי הגנה (או הסר את תווית הרגישות) ונסה שוב.';
+
   async function readFile(file) {
     const name = file.name.toLowerCase();
-    if (name.endsWith('.csv') || name.endsWith('.tsv') || name.endsWith('.txt')) {
-      let text = await file.text();
-      text = text.replace(/^﻿/, '');
+    if (/\.(csv|tsv|txt)$/.test(name)) {
+      const buf = await file.arrayBuffer();
+      let text = new TextDecoder('utf-8').decode(buf);
+      if (text.includes('\uFFFD')) text = new TextDecoder('windows-1255').decode(buf); // CSV עברי ישן מאקסל
+      text = text.replace(/^\uFEFF/, '');
       return [{ name: file.name, rows: parseCSV(text) }];
     }
     const buf = await file.arrayBuffer();
-    if (name.endsWith('.xls') || !(new Uint8Array(buf)[0] === 0x50 && new Uint8Array(buf)[1] === 0x4b)) {
-      const X = await loadSheetJS();
-      const wb = X.read(buf, { type: 'array', cellDates: true });
-      return wb.SheetNames.map((n) => ({
-        name: n,
-        rows: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }).map((r) => r.map((v) => v instanceof Date ? v.toISOString().slice(0, 10) : v)),
-      }));
+    const u8 = new Uint8Array(buf);
+    if (!u8.length) throw new Error('הקובץ ריק.');
+    const isZip = u8[0] === 0x50 && u8[1] === 0x4b;
+    const isCFB = u8[0] === 0xd0 && u8[1] === 0xcf && u8[2] === 0x11 && u8[3] === 0xe0;
+    if (isCFB && /\.xls[xmb]$/.test(name)) throw new Error(ENCRYPTED); // xlsx עטוף בהצפנה
+    if (isZip && typeof DecompressionStream !== 'undefined') {
+      try { return await readXlsx(buf); }
+      catch (e) { console.warn('xlsx-lite failed, trying SheetJS', e); }
     }
-    return readXlsx(buf);
+    return viaSheetJS(buf);
   }
 
   /* ---------------- ZIP write ---------------- */
