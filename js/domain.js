@@ -18,6 +18,7 @@
     { key: 'desc', label: 'תיאור', re: /תיאור|description|\bdesc\b|שם\s*פריט/i },
   ];
   D.BOM_ROLES = [
+    { key: 'project', label: 'פרויקט', re: /פרוי?קט|project|program|תוכנית/i },
     { key: 'assembly', label: 'מכלול', re: /מכלול|assembly|\basm\b|assy/i },
     { key: 'part', label: 'מק"ט', re: /מק["'״]?ט|מקט|part|p\/n|\bpn\b|catalog/i },
     { key: 'desc', label: 'תיאור', re: /תיאור|description|desc/i },
@@ -118,6 +119,7 @@
     const rows = Store.rows('orders');
     const names = new Map(); // norm -> כתיב תצוגה
     for (const r of rows) { const v = String(r.c[m.project] ?? '').trim(); if (v && !names.has(norm(v))) names.set(norm(v), v); }
+    const bpc = D.bomMapping().project;
     const all = Store.db.projects;
     let changed = false; const created = [];
     // כפילויות שנוצרו במקביל בשני מכשירים: משאירים את הוותיקה
@@ -146,6 +148,8 @@
       if (votes.size) { const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0]; target = missing.find((x) => x.id === best); }
       if (!target) { target = all.find((x) => x.deleted && norm(x.name) === k) || null; if (target) target.deleted = false; }
       if (target) {
+        // הפרויקט שינה שם בטבלת ההזמנות — גם שורות ה-BOM שלו עוברות לשם החדש
+        if (norm(target.name) !== k) for (const b of Store.rows('bom')) if (norm(b.c[bpc]) === norm(target.name)) { b.c[bpc] = display; Store.touch(b); }
         target.name = display; target.hadRows = true; Store.touch(target);
         missing = missing.filter((x) => x !== target); byNorm.set(k, target); changed = true;
       } else {
@@ -153,6 +157,20 @@
         const np = { id: Store.uid(), name: display, order: list.length, color: D.PROJECT_COLORS[list.length % D.PROJECT_COLORS.length], createdAt: Store.now(), updatedAt: Store.now(), auto: true, hadRows: true };
         all.push(np); byNorm.set(k, np); created.push(np); changed = true;
       }
+    }
+    // פרויקטים שמופיעים רק ב-BOM מקבלים גם הם לשונית
+    const bomNames = new Map();
+    for (const r of Store.rows('bom')) { const v = String(r.c[bpc] ?? '').trim(); if (v && !bomNames.has(norm(v))) bomNames.set(norm(v), v); }
+    for (const [k, display] of bomNames) {
+      if (byNorm.has(k)) { missing = missing.filter((x) => norm(x.name) !== k); continue; }
+      let t = all.find((x) => x.deleted && norm(x.name) === k);
+      if (t) { t.deleted = false; Store.touch(t); }
+      else {
+        const list = Store.projects();
+        t = { id: Store.uid(), name: display, order: list.length, color: D.PROJECT_COLORS[list.length % D.PROJECT_COLORS.length], createdAt: Store.now(), updatedAt: Store.now(), auto: true, hadRows: true };
+        all.push(t); created.push(t);
+      }
+      byNorm.set(k, t); changed = true;
     }
     for (const p of missing) { p.deleted = true; Store.touch(p); changed = true; }
     membership = new Map();
@@ -165,6 +183,8 @@
     const m = D.mapping();
     const rows = D.projectRows(p);
     if (m.project) for (const r of rows) { r.c[m.project] = name; Store.touch(r); membership.set(r.id, p.id); }
+    const bpc = D.bomMapping().project;
+    for (const b of D.bomLines(p)) { b.c[bpc] = name; Store.touch(b); }
     p.name = name; Store.touch(p);
     Store.commit();
     return rows.length;
@@ -188,16 +208,57 @@
   };
 
   /* ---------- BOM ---------- */
-  D.bomMapping = () => Store.db.settings.bomMapping || {};
-  D.bomLines = (p) => Store.rows('bom').filter((r) => r.p === p.id);
+  D.bomMapping = () => Object.assign({ project: 'b_proj', assembly: 'b_asm', part: 'b_pn', desc: 'b_desc', qty: 'b_qty' }, Store.db.settings.bomMapping || {});
+  D.bomProjOf = (r) => norm(r.c[D.bomMapping().project]);
+  D.bomLines = (p) => { const k = norm(p.name); return Store.rows('bom').filter((r) => { const v = D.bomProjOf(r); return v ? v === k : r.p === p.id; }); };
+  /** שדרוג נתונים: עמודת פרויקט ב-BOM (בגרסה הקודמת ה-BOM נשמר לפי מזהה לשונית) */
+  D.ensureBomSchema = () => {
+    const ds = Store.db.datasets.bom; let changed = false;
+    if (!ds.columns.some((c) => c.id === 'b_proj')) {
+      ds.columns.push({ id: 'b_proj', name: 'פרויקט', width: 130, type: 'text', order: -1, updatedAt: Store.now() });
+      changed = true;
+    }
+    const bm = Store.db.settings.bomMapping || {};
+    if (!bm.project) { Store.db.settings.bomMapping = Object.assign({}, D.bomMapping(), bm, { project: 'b_proj' }); Store.db.settings.updatedAt = Store.now(); changed = true; }
+    const pcol = D.bomMapping().project;
+    for (const r of ds.rows) {
+      if (r.deleted || r.c[pcol] || !r.p) continue;
+      const p = Store.db.projects.find((x) => x.id === r.p);
+      if (p) { r.c[pcol] = p.name; Store.touch(r); changed = true; }
+    }
+    if (changed) Store.commit();
+  };
   /**
    * לכל שורת BOM: כמה סופק מתוך הנדרש, לפי ההזמנות בפרויקט עם אותו מק"ט.
    * כמות שסופקה מחולקת בין שורות BOM שחולקות מק"ט (לפי הסדר), כדי לא לספור פעמיים.
    */
-  D.bomProgress = (p) => {
+  D.bomProgress = (p) => D.bomProgressFor(D.bomLines(p), D.projectRows(p));
+  /** התקדמות לכל שורות ה-BOM, כל שורה מול ההזמנות של הפרויקט שלה */
+  D.bomProgressAll = () => {
+    const m = D.mapping();
+    const byProj = new Map();
+    for (const r of Store.rows('bom')) { const k = D.bomProjOf(r); if (!byProj.has(k)) byProj.set(k, []); byProj.get(k).push(r); }
+    const allOrders = Store.rows('orders');
+    const ordersBy = new Map();
+    for (const o of allOrders) { const k = m.project ? norm(o.c[m.project]) : ''; if (!ordersBy.has(k)) ordersBy.set(k, []); ordersBy.get(k).push(o); }
+    const groups = [];
+    const lines = new Map();
+    for (const [k, rows] of byProj) {
+      const res = D.bomProgressFor(rows, k ? (ordersBy.get(k) || []) : allOrders);
+      const name = k ? String(rows[0].c[D.bomMapping().project]).trim() : 'ללא פרויקט';
+      groups.push(Object.assign(res, { key: k, name, project: Store.projects().find((p) => norm(p.name) === k) || null }));
+      for (const [id, info] of res.lines) lines.set(id, info);
+    }
+    const count = lines.size;
+    const overall = count ? [...lines.values()].reduce((s, i) => s + i.frac, 0) / count : 0;
+    const cnt = { done: 0, ordered: 0, late: 0, missing: 0 };
+    for (const i of lines.values()) cnt[i.state]++;
+    return { groups, lines, count, overall, cnt };
+  };
+  D.bomProgressFor = (linesIn, ordersIn) => {
     const m = D.mapping(); const bm = D.bomMapping();
-    const lines = D.bomLines(p).sort((a, b) => (a.o || 0) - (b.o || 0));
-    const orders = m.part ? D.projectRows(p) : [];
+    const lines = [...linesIn].sort((a, b) => (a.o || 0) - (b.o || 0));
+    const orders = m.part ? ordersIn : [];
     const byPart = new Map();
     for (const o of orders) {
       const k = normPart(o.c[m.part]); if (!k) continue;

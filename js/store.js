@@ -57,6 +57,7 @@
   function defaultBomColumns() {
     const t = now();
     return [
+      { id: 'b_proj', name: 'פרויקט', width: 130, type: 'text', order: -1, updatedAt: t },
       { id: 'b_asm', name: 'מכלול', width: 170, type: 'text', order: 0, updatedAt: t },
       { id: 'b_pn', name: 'מק"ט', width: 150, type: 'text', order: 1, updatedAt: t },
       { id: 'b_desc', name: 'תיאור', width: 240, type: 'text', order: 2, updatedAt: t },
@@ -72,7 +73,7 @@
         orders: { columns: [], rows: [] },
         bom: { columns: defaultBomColumns(), rows: [] },
       },
-      settings: { mapping: {}, statusMap: {}, bomMapping: { assembly: 'b_asm', part: 'b_pn', desc: 'b_desc', qty: 'b_qty' }, updatedAt: 0 },
+      settings: { mapping: {}, statusMap: {}, bomMapping: { project: 'b_proj', assembly: 'b_asm', part: 'b_pn', desc: 'b_desc', qty: 'b_qty' }, updatedAt: 0 },
     };
   }
 

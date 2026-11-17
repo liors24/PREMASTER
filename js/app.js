@@ -12,7 +12,7 @@
   const pct = (x) => Math.round(x * 100) + '%';
 
   const S = {
-    route: { tab: 'main', sub: 'orders' },
+    route: { tab: 'home', sub: 'home' },
     grid: null,
     catFilter: null,
     newDays: 7,
@@ -41,7 +41,7 @@
         document.documentElement.style.setProperty('--vt-y', y + 'px');
         document.startViewTransition(() => this.apply(next));
       } else this.apply(next);
-      if (S.route.sub === 'dashboard' || S.route.sub === 'overview') setTimeout(() => renderMain(false), 10);
+      if (!isGridView()) setTimeout(() => renderMain(false), 10);
     },
   };
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => { if (!localStorage.getItem('pt.theme')) Theme.apply(e.matches ? 'dark' : 'light'); });
@@ -191,35 +191,41 @@
     $('#userBtn').addEventListener('click', (e) => userMenu(e.currentTarget));
     $('#syncPill').addEventListener('click', () => Store.syncNow());
     $('#themeBtn').addEventListener('click', (e) => Theme.toggle(e.currentTarget));
+    D.ensureBomSchema();
     D.syncProjects();
     renderTabs();
     renderMain();
     updateSync();
     bindDrop();
   }
+  const FIXED = ['home', 'main', 'bom'];
+  const DEFAULT_SUB = { home: 'home', main: 'orders', bom: 'bomtable' };
   function go(tab, sub) {
-    S.route = { tab, sub: sub || (tab === 'main' ? 'orders' : (S.route.tab === tab ? S.route.sub : 'dashboard')) };
+    S.route = { tab, sub: sub || DEFAULT_SUB[tab] || (S.route.tab === tab ? S.route.sub : 'dashboard') };
     S.catFilter = null;
     sessionStorage.setItem('pt.route', JSON.stringify(S.route));
     renderTabs(); renderMain();
   }
-  function currentProject() { return S.route.tab === 'main' ? null : Store.projects().find((p) => p.id === S.route.tab); }
+  function currentProject() { return FIXED.includes(S.route.tab) ? null : Store.projects().find((p) => p.id === S.route.tab); }
 
   function renderTabs() {
     const el = $('#tabs'); if (!el) return;
     const projects = Store.projects();
-    const all = Store.rows('orders').length;
-    let h = `<button class="tab ${S.route.tab === 'main' ? 'on' : ''}" data-tab="main" role="tab">${icon('table', 15)}<span>טבלה מרכזית</span><em>${all}</em></button>`;
+    const t = S.route.tab;
+    let h = `<button class="tab ${t === 'home' ? 'on' : ''}" data-tab="home" role="tab">${icon('chart', 15)}<span>דשבורד משולב</span></button>
+      <button class="tab ${t === 'main' ? 'on' : ''}" data-tab="main" role="tab">${icon('table', 15)}<span>הזמנות</span><em>${fmtN(Store.rows('orders').length)}</em></button>
+      <button class="tab ${t === 'bom' ? 'on' : ''}" data-tab="bom" role="tab">${icon('layers', 15)}<span>BOM</span><em>${fmtN(Store.rows('bom').length)}</em></button>
+      <span class="tab-sep" aria-hidden="true"></span>`;
     for (const p of projects) {
       const n = D.projectRows(p).length;
       const locked = !Store.isUnlocked(p.id);
-      h += `<button class="tab ${S.route.tab === p.id ? 'on' : ''}${S.newTabs.has(p.id) ? ' pop' : ''}" data-tab="${p.id}" role="tab" style="--pc:${p.color}"><i class="pdot"></i><span>${esc(p.name)}</span>${locked ? `<span class="lock" title="נעול">${icon('lock', 12)}</span>` : `<em>${n}</em>`}</button>`;
+      h += `<button class="tab ${t === p.id ? 'on' : ''}${S.newTabs.has(p.id) ? ' pop' : ''}" data-tab="${p.id}" role="tab" style="--pc:${p.color}"><i class="pdot"></i><span>${esc(p.name)}</span>${locked ? `<span class="lock" title="נעול">${icon('lock', 12)}</span>` : `<em>${fmtN(n)}</em>`}</button>`;
     }
     h += `<button class="tab tab-add" id="addProject" title="פרויקט חדש" aria-label="פרויקט חדש">${icon('plus', 16)}</button>`;
     el.innerHTML = h;
     el.querySelectorAll('[data-tab]').forEach((b) => {
       b.addEventListener('click', () => go(b.dataset.tab));
-      if (b.dataset.tab !== 'main') b.addEventListener('contextmenu', (e) => { e.preventDefault(); projectMenu(b.dataset.tab, e.clientX, e.clientY); });
+      if (!FIXED.includes(b.dataset.tab)) b.addEventListener('contextmenu', (e) => { e.preventDefault(); projectMenu(b.dataset.tab, e.clientX, e.clientY); });
     });
     $('#addProject').addEventListener('click', addProjectFlow);
     setTimeout(() => S.newTabs.clear(), 1200);
@@ -247,7 +253,7 @@
       { label: 'הזזה ימינה', icon: 'chevron', action: () => moveProject(p, -1) },
       { label: 'הזזה שמאלה', icon: 'chevron', action: () => moveProject(p, 1) },
       { sep: true },
-      { label: D.projectRows(p).length ? 'הלשונית יורדת לבד כשאין לה הזמנות' : 'הסרת הלשונית', icon: 'trash', danger: true, disabled: D.projectRows(p).length > 0, action: () => { p.deleted = true; Store.touch(p); Store.commit(); go('main'); } },
+      { label: D.projectRows(p).length ? 'הלשונית יורדת לבד כשאין לה הזמנות' : 'הסרת הלשונית', icon: 'trash', danger: true, disabled: D.projectRows(p).length > 0, action: () => { p.deleted = true; Store.touch(p); Store.commit(); go('home'); } },
     ]);
   }
   function moveProject(p, d) {
@@ -273,7 +279,7 @@
     if (r.created.length) UI.toast(`נפתחה לשונית חדשה: ${r.created.map((x) => x.name).join(', ')}`, 'ok');
     renderTabs();
     if (!r.changed) return;
-    if (S.route.tab !== 'main' && !currentProject()) { UI.toast('הפרויקט כבר לא מופיע בטבלה, לכן הלשונית שלו הוסרה.', 'info', 5000); return go('main'); }
+    if (!FIXED.includes(S.route.tab) && !currentProject()) { UI.toast('הפרויקט כבר לא מופיע בטבלה, לכן הלשונית שלו הוסרה.', 'info', 5000); return go('main'); }
     if (before) { const h = $('.vh-title h1'); if (h) h.textContent = before.name; }
     S.grid && S.grid.refresh(true);
   }
@@ -333,8 +339,8 @@
     if (!Store.currentUser()) return;
     D.syncProjects();
     renderTabs();
-    if (S.route.tab !== 'main' && !currentProject()) return go('main');
-    if (S.grid && S.route.sub !== 'dashboard') { S.grid.refresh(true, true); if (S.route.sub === 'bom') renderBomSummary(); }
+    if (!FIXED.includes(S.route.tab) && !currentProject()) return go('home');
+    if (S.grid && isGridView()) { S.grid.refresh(true, true); if (S.route.sub === 'bom' || S.route.sub === 'bomtable') renderBomSummary(); }
     else renderMain(false);
   }
 
@@ -343,27 +349,37 @@
     const main = $('#main'); if (!main) return;
     if (S.grid) { S.grid.destroy(); S.grid = null; }
     const p = currentProject();
-    if (S.route.tab !== 'main' && !p) { S.route = { tab: 'main', sub: 'orders' }; return renderMain(); }
+    if (!FIXED.includes(S.route.tab) && !p) { S.route = { tab: 'home', sub: 'home' }; return renderMain(anim); }
     if (p && !Store.isUnlocked(p.id)) return renderLock(main, p);
-    const subs = p
-      ? [['dashboard', 'chart', 'דשבורד'], ['orders', 'table', 'הזמנות'], ['bom', 'layers', 'BOM ומכלולים']]
-      : [['orders', 'table', 'כל ההזמנות'], ['overview', 'chart', 'סקירת פרויקטים']];
-    if (!subs.some((s) => s[0] === S.route.sub)) S.route.sub = subs[0][0];
+    const SUBS = {
+      home: [],
+      main: [['orders', 'table', 'טבלת הזמנות'], ['odash', 'chart', 'דשבורד הזמנות']],
+      bom: [['bomtable', 'table', 'טבלת BOM'], ['bdash', 'chart', 'דשבורד BOM']],
+    };
+    const subs = p ? [['dashboard', 'chart', 'דשבורד משולב'], ['orders', 'table', 'הזמנות'], ['bom', 'layers', 'BOM']] : SUBS[S.route.tab];
+    if (subs.length && !subs.some((x) => x[0] === S.route.sub)) S.route.sub = subs[0][0];
+    if (!subs.length) S.route.sub = 'home';
+    const TITLES = { home: 'דשבורד משולב', main: 'הזמנות', bom: 'BOM' };
     main.innerHTML = `
       <div class="view-head">
-        <div class="vh-title">${p ? `<i class="pdot lg" style="--pc:${p.color}"></i><h1>${esc(p.name)}</h1>` : '<h1>טבלה מרכזית</h1>'}</div>
-        <div class="seg sub" role="tablist">${subs.map(([k, ic, l]) => `<button type="button" role="tab" data-sub="${k}" class="${S.route.sub === k ? 'on' : ''}">${icon(ic, 15)}<span>${l}</span></button>`).join('')}</div>
+        <div class="vh-title">${p ? `<i class="pdot lg" style="--pc:${p.color}"></i><h1>${esc(p.name)}</h1>` : `<h1>${TITLES[S.route.tab]}</h1>`}</div>
+        ${subs.length ? `<div class="seg sub" role="tablist">${subs.map(([k, ic, l]) => `<button type="button" role="tab" data-sub="${k}" class="${S.route.sub === k ? 'on' : ''}">${icon(ic, 15)}<span>${l}</span></button>`).join('')}</div>` : ''}
       </div>
       <div class="view${anim ? ' enter' : ' static'}" id="view"></div>`;
     main.querySelectorAll('[data-sub]').forEach((b) => b.addEventListener('click', () => go(S.route.tab, b.dataset.sub)));
     const v = $('#view');
-    if (S.route.sub === 'orders') renderOrders(v, p);
-    else if (S.route.sub === 'dashboard') renderDashboard(v, p);
-    else if (S.route.sub === 'bom') renderBom(v, p);
-    else if (S.route.sub === 'overview') renderOverview(v);
-    if (S.route.sub !== 'orders' && S.route.sub !== 'bom') setStatus('');
+    const sub = S.route.sub;
+    if (sub === 'orders') renderOrders(v, p);
+    else if (sub === 'odash') renderOrdersDash(v);
+    else if (sub === 'bomtable') renderBom(v, null);
+    else if (sub === 'bom') renderBom(v, p);
+    else if (sub === 'bdash') renderBomDash(v);
+    else if (sub === 'dashboard') renderDashboard(v, p);
+    else renderHome(v);
+    if (!isGridView()) setStatus('');
     countUp(v, anim);
   }
+  const isGridView = () => ['orders', 'bom', 'bomtable'].includes(S.route.sub);
 
   function renderLock(main, p) {
     main.innerHTML = `<div class="lock-screen"><form class="card form-card narrow" id="lockForm">
@@ -514,10 +530,11 @@
   }
 
   /* ================= הגדרות עמודות ================= */
-  function columnsDialog(focusId) {
-    const cols = Store.columns('orders');
-    const m = D.mapping();
-    const roleSel = (cid) => `<select data-role="${cid}"><option value="">—</option>${D.ROLES.map((r) => `<option value="${r.key}" ${m[r.key] === cid ? 'selected' : ''}>${r.label}</option>`).join('')}</select>`;
+  function columnsDialog(focusId, ds = 'orders') {
+    const cols = Store.columns(ds);
+    const m = ds === 'bom' ? D.bomMapping() : D.mapping();
+    const ROLES = ds === 'bom' ? D.BOM_ROLES : D.ROLES;
+    const roleSel = (cid) => `<select data-role="${cid}"><option value="">—</option>${ROLES.map((r) => `<option value="${r.key}" ${m[r.key] === cid ? 'selected' : ''}>${r.label}</option>`).join('')}</select>`;
     const body = document.createElement('div');
     body.innerHTML = `<p class="muted">שם, סוג ותפקיד לכל עמודה. התפקיד אומר למערכת איפה למצוא את הפרויקט, הסטטוס, המק"ט ותאריך האספקה — עליהם נשענים השיוך ללשוניות, הדשבורד וה-BOM.</p>
       <div class="col-row col-hdr"><span>מוצגת</span><span>שם</span><span>סוג</span><span>תפקיד</span><span>סדר</span></div>
@@ -546,21 +563,22 @@
       list.lastElementChild.querySelector('[data-name]').select();
     };
     UI.modal({
-      title: 'עמודות הטבלה', body, wide: true,
+      title: ds === 'bom' ? 'עמודות טבלת ה-BOM' : 'עמודות טבלת ההזמנות', body, wide: true,
       actions: [{ label: 'ביטול' }, { label: 'שמירה', primary: true, icon: 'check', action: () => {
         const rows = [...list.querySelectorAll('.col-row')];
         const mapping = {};
         rows.forEach((el, i) => {
           const id = el.dataset.id;
-          let c = Store.db.datasets.orders.columns.find((x) => x.id === id);
-          if (!c) { c = { id, width: 140 }; Store.db.datasets.orders.columns.push(c); }
+          let c = Store.db.datasets[ds].columns.find((x) => x.id === id);
+          if (!c) { c = { id, width: 140 }; Store.db.datasets[ds].columns.push(c); }
           const name = $('[data-name]', el).value.trim() || 'עמודה';
           const type = $('[data-type]', el).value;
           const hidden = !$('[data-vis]', el).checked;
           if (c.name !== name || c.type !== type || !!c.hidden !== hidden || c.order !== i) { Object.assign(c, { name, type, hidden, order: i }); Store.touch(c); }
           const role = $('[data-role]', el).value; if (role) mapping[role] = id;
         });
-        Store.db.settings.mapping = mapping; Store.db.settings.updatedAt = Store.now();
+        if (ds === 'bom') Store.db.settings.bomMapping = mapping; else Store.db.settings.mapping = mapping;
+        Store.db.settings.updatedAt = Store.now();
         Store.commit(); D.syncProjects(); renderTabs(); renderMain();
       } }],
     });
@@ -652,8 +670,15 @@
             ${existing ? '<option value="append">הוספת כל השורות כחדשות</option><option value="replace">החלפת כל הנתונים</option>' : ''}</select></label>`}
         </div>
         ${!isBom && existing ? `<label class="field" data-keywrap><span>עמודת מפתח לזיהוי שורה קיימת (למשל מס׳ הזמנה + שורה)</span><select data-key multiple size="3">${headers.map((h, i) => `<option value="${i}" ${D.ROLES.find((r) => r.key === 'order').re.test(h) || (D.ROLES.find((r) => r.key === 'part').re.test(h)) ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select><small class="muted">אפשר לבחור כמה עמודות עם Ctrl. שורה שהמפתח שלה קיים תתעדכן, אחרת תתווסף.</small></label>` : ''}
-        ${isBom ? `<div class="grid4">${D.BOM_ROLES.map((r) => `<label class="field"><span>${r.label}</span><select data-bom="${r.key}"><option value="">—</option>${headers.map((h, i) => `<option value="${i}" ${bomGuess[r.key] === String(i) ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></label>`).join('')}</div>
-          <label class="chk"><input type="checkbox" data-replacebom checked><span>להחליף את ה-BOM הקיים של ${esc(p.name)}</span></label>` : ''}
+        ${isBom ? `<p class="muted sm-note">התאם את עמודות הקובץ לשדות ה-BOM. שאר העמודות בקובץ ייכנסו כעמודות נוספות בטבלה.</p>
+          <div class="grid5">${D.BOM_ROLES.map((r) => `<label class="field"><span>${r.label}</span><select data-bom="${r.key}"><option value="">—</option>${headers.map((h, i) => `<option value="${i}" ${bomGuess[r.key] === String(i) ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></label>`).join('')}</div>
+          <div class="grid2">
+            <label class="field"><span>פרויקט לשורות שאין להן פרויקט בקובץ</span><input data-fallback list="projList" value="${esc(p ? p.name : '')}" placeholder="למשל PW1100"><datalist id="projList">${Store.projects().map((x) => `<option value="${esc(x.name)}">`).join('')}</datalist></label>
+            <label class="field"><span>אופן הייבוא</span><select data-bommode>
+              <option value="replaceProjects">החלפת ה-BOM של הפרויקטים שבקובץ</option>
+              <option value="append">הוספה ל-BOM הקיים</option>
+              <option value="replaceAll">החלפת כל ה-BOM</option></select></label>
+          </div>` : ''}
         ${!isBom && newHeaders.length && cols.length ? `<p class="note">${icon('plus', 14)} עמודות חדשות שיתווספו לטבלה: ${newHeaders.map(esc).join(', ')}</p>` : ''}
         <div class="preview"><table><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${prev.map((r) => `<tr>${headers.map((_, i) => `<td>${esc(r[i] ?? '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
       $('[data-sheet]', body).onchange = (e) => { si = +e.target.value; body.innerHTML = ''; draw(); };
@@ -663,7 +688,7 @@
     };
     draw();
     UI.modal({
-      title: isBom ? `ייבוא BOM · ${p.name}` : 'ייבוא קובץ אקסל', body, wide: true,
+      title: isBom ? `ייבוא BOM${p ? ' · ' + p.name : ''}` : 'ייבוא טבלת הזמנות', body, wide: true,
       actions: [{ label: 'ביטול' }, { label: 'ייבוא', primary: true, icon: 'upload', action: async () => {
         const sh = sheets[si]; const hr = +$('[data-hr]', body).value;
         const headers = (sh.rows[hr] || []).map((h, i) => String(h ?? '').trim() || `עמודה ${i + 1}`);
@@ -671,8 +696,9 @@
         if (isBom) {
           const map = {}; body.querySelectorAll('[data-bom]').forEach((s) => (map[s.dataset.bom] = s.value));
           if (map.assembly === '' || map.part === '') throw new Error('צריך לבחור לפחות את עמודות המכלול והמק"ט.');
-          const rep = $('[data-replacebom]', body).checked;
-          setTimeout(() => importBom(p, data, map, rep).catch((e) => UI.toast(e.message, 'error', 6000)), 0);
+          const mode = $('[data-bommode]', body).value; const fb = $('[data-fallback]', body).value.trim();
+          if (map.project === '' && !fb) throw new Error('אין בקובץ עמודת פרויקט — כתוב לאיזה פרויקט שייך ה-BOM.');
+          setTimeout(() => importBom(headers, data, map, mode, fb).catch((e) => UI.toast(e.message, 'error', 6000)), 0);
         } else {
           const mode = $('[data-mode]', body).value;
           const keys = [...($('[data-key]', body)?.selectedOptions || [])].map((o) => +o.value);
@@ -763,28 +789,59 @@
     await prog.done(`הייבוא הושלם · ${fmtN(created)} חדשות${updated ? ` · ${fmtN(updated)} עודכנו` : ''}`);
     UI.toast(`ייבוא הושלם: ${fmtN(created)} שורות חדשות${updated ? `, ${fmtN(updated)} עודכנו` : ''}${Store.cfg.mode === 'github' ? ' · מסונכרן לגיטהאב ברקע' : ''}`, 'ok', 4500);
   }
-  async function importBom(p, data, map, replace) {
+  /**
+   * ייבוא טבלת BOM: עמודות התפקיד (פרויקט, מכלול, מק"ט, תיאור, כמות) נכנסות לעמודות הקבועות,
+   * ושאר כותרות הקובץ נוספות כעמודות נוספות בטבלת ה-BOM.
+   */
+  async function importBom(headers, data, map, mode, fallback) {
     const prog = UI.progress(`מייבא BOM · ${fmtN(data.length)} שורות`);
-    prog.set(0.1, 'קולט שורות');
-    await UI.yieldUI();
-    const ds = Store.db.datasets.bom;
-    const bm = D.bomMapping();
-    if (replace) for (const r of D.bomLines(p)) { r.deleted = true; Store.touch(r); }
-    let o = D.bomLines(p).reduce((a, r) => Math.max(a, r.o || 0), 0);
-    let n = 0;
-    for (const line of data) {
-      const get = (k) => (map[k] === '' || map[k] == null ? '' : line[+map[k]] ?? '');
-      if (!String(get('part')).trim() && !String(get('assembly')).trim()) continue;
-      const row = { id: Store.uid(), p: p.id, o: ++o, createdAt: Store.now(), c: {} };
-      row.c[bm.assembly] = get('assembly'); row.c[bm.part] = get('part'); row.c[bm.desc] = get('desc');
-      const q = get('qty'); row.c[bm.qty] = q === '' ? '' : (+q || q);
-      Store.touch(row); ds.rows.push(row); n++;
-    }
-    Store.commit();
-    prog.set(0.85, 'שומר במכשיר');
-    await Store.flush();
-    renderMain();
-    await prog.done(`נקלטו ${fmtN(n)} שורות BOM`);
+    try {
+      prog.set(0.04, 'מתאים עמודות');
+      await UI.yieldUI();
+      const ds = Store.db.datasets.bom;
+      const bm = D.bomMapping();
+      const used = new Set(Object.values(map).filter((x) => x !== '').map(Number));
+      const cols = Store.columns('bom');
+      const byName = new Map(cols.map((c) => [D.norm(c.name), c]));
+      let order = cols.length;
+      const extra = [];
+      headers.forEach((h, i) => {
+        if (used.has(i)) return;
+        let c = byName.get(D.norm(h));
+        if (!c) { const vals = data.map((r) => r[i]); c = { id: 'bx' + Store.uid(), name: h, type: guessType(h, vals), width: guessWidth(h, vals), order: order++ }; Store.touch(c); ds.columns.push(c); byName.set(D.norm(h), c); }
+        if (!Object.values(bm).includes(c.id)) extra.push([i, c]);
+      });
+      const get = (line, k) => (map[k] === '' || map[k] == null ? '' : line[+map[k]] ?? '');
+      const projOf = (line) => String(get(line, 'project') || fallback || '').trim();
+      if (mode === 'replaceAll') for (const r of Store.rows('bom')) { r.deleted = true; Store.touch(r); }
+      else if (mode === 'replaceProjects') {
+        const keys = new Set(data.map((l) => D.norm(projOf(l))));
+        for (const r of Store.rows('bom')) if (keys.has(D.bomProjOf(r))) { r.deleted = true; Store.touch(r); }
+      }
+      let o = Store.rows('bom').reduce((a, r) => Math.max(a, r.o || 0), 0);
+      let n = 0, k = 0;
+      prog.set(0.08, 'קולט שורות');
+      for (const line of data) {
+        if (++k % 1000 === 0) { prog.set(0.08 + 0.72 * (k / data.length), 'קולט שורות', `${fmtN(k)} מתוך ${fmtN(data.length)}`); await UI.yieldUI(); }
+        if (!String(get(line, 'part')).trim() && !String(get(line, 'assembly')).trim()) continue;
+        const row = { id: Store.uid(), o: ++o, createdAt: Store.now(), c: {} };
+        row.c[bm.project] = projOf(line);
+        row.c[bm.assembly] = get(line, 'assembly'); row.c[bm.part] = get(line, 'part'); row.c[bm.desc] = get(line, 'desc');
+        const q = get(line, 'qty'); row.c[bm.qty] = q === '' ? '' : (+q || q);
+        for (const [i, c] of extra) { const v = line[i]; row.c[c.id] = v == null ? '' : c.type === 'date' ? Grid.util.parseDate(v) : v; }
+        Store.touch(row); ds.rows.push(row); n++;
+      }
+      prog.set(0.82, 'מקשר לפרויקטים ולהזמנות');
+      await UI.yieldUI();
+      Store.commit();
+      const r = D.syncProjects();
+      r.created.forEach((x) => S.newTabs.add(x.id));
+      prog.set(0.9, 'שומר במכשיר');
+      await Store.flush();
+      renderTabs(); renderMain();
+      await prog.done(`נקלטו ${fmtN(n)} שורות BOM`);
+      if (r.created.length) UI.toast(`נפתחו לשוניות לפרויקטים מה-BOM: ${r.created.map((x) => x.name).join(', ')}`, 'ok', 5000);
+    } catch (e) { prog.fail(); throw e; }
   }
 
   /* ================= ייצוא ================= */
@@ -801,7 +858,7 @@
   }
 
   /* ================= דשבורד ================= */
-  const KPI_IC = { all: 'box', notDone: 'cloud', supplied: 'check', closed: 'lock', delayed: 'alert', new: 'plus' };
+  const KPI_IC = { all: 'box', notDone: 'cloud', supplied: 'check', closed: 'lock', delayed: 'alert', new: 'plus', lines: 'table', asm: 'layers', done: 'check', ordered: 'cloud', late: 'alert', missing: 'x' };
   function kpiCards(tiles, total, clickable = true) {
     return `<section class="kpis" aria-label="מדדי הזמנות">${tiles.map(([k, l, n, sub], i) => {
       const share = total ? Math.min(1, n / total) : 0;
@@ -813,12 +870,12 @@
         <span class="kpi-s">${esc(sub || '')}</span></${tag}>`;
     }).join('')}</section>`;
   }
-  function ring(pctVal, size, color, label) {
+  function ring(pctVal, size, color, label, light) {
     const r = size / 2 - 9;
-    return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+    return `<svg class="ring${light ? ' light' : ''}" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
       <circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-track"/>
       <circle cx="${size / 2}" cy="${size / 2}" r="${r}" class="ring-val${Math.round(pctVal * 100) ? '' : ' zero'}" pathLength="100" style="--v:${Math.round(pctVal * 100)};stroke:${color}" transform="rotate(-90 ${size / 2} ${size / 2})"/>
-    </svg><span class="ring-c"><b data-count="${Math.round(pctVal * 100)}" data-suffix="%">${Math.round(pctVal * 100)}%</b><em>${label}</em></span>`;
+    </svg><span class="ring-c${light ? ' light' : ''}"><b data-count="${Math.round(pctVal * 100)}" data-suffix="%">${Math.round(pctVal * 100)}%</b><em>${label}</em></span>`;
   }
   function renderDashboard(v, p) {
     const m = D.mapping();
@@ -877,7 +934,7 @@
     v.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => { S.route.sub = 'orders'; sessionStorage.setItem('pt.route', JSON.stringify(S.route)); renderMain(); S.catFilter = b.dataset.cf === 'all' ? null : b.dataset.cf; S.grid && (S.grid.refresh(), renderChips()); }));
     v.querySelectorAll('[data-nd]').forEach((b) => (b.onclick = () => { S.newDays = +b.dataset.nd; renderMain(false); }));
     v.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => go(p.id, b.dataset.go)));
-    v.querySelectorAll('[data-asm]').forEach((b) => (b.onclick = () => asmDialog(p, b.dataset.asm)));
+    v.querySelectorAll('[data-asm]').forEach((b) => (b.onclick = () => asmDialog(bp, b.dataset.asm)));
     const fx = $('#fixCols'); fx && (fx.onclick = () => columnsDialog());
     bindTips(v);
   }
@@ -936,21 +993,21 @@
     paths = track + paths;
     return `<svg class="fan" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">${paths}<circle cx="${cx}" cy="${cy}" r="${r - 13}" class="fan-hub"/></svg>`;
   }
-  function bomOverview(bp) {
+  function bomOverview(bp, gkey = '') {
     const asms = [...bp.assemblies].sort((a, b) => a.pct - b.pct);
     const tot = { done: 0, ordered: 0, late: 0, missing: 0 };
     asms.forEach((a) => Object.keys(tot).forEach((k) => (tot[k] += a.cnt[k])));
     return `<div class="bom-head"><div class="bom-overall"><b data-count="${Math.round(bp.overall * 100)}" data-suffix="%">${pct(bp.overall)}</b><span>השלמה כוללת · ${fmtN(bp.count)} מק"טים ב-${asms.length} מכלולים</span></div>
       <ul class="legend inline">${Object.entries(D.LINE_STATE).map(([k, s]) => `<li><i class="sw ${k === 'missing' ? 'c-missing' : 'c-' + s.cls}"></i><span>${s.label}</span><b>${tot[k]}</b></li>`).join('')}</ul></div>
       <div class="asm-grid">${asms.map((a, i) => `
-        <button class="asm" type="button" data-asm="${esc(a.name)}" style="--d:${i}">
+        <button class="asm" type="button" data-asm="${esc(a.name)}" data-g="${esc(gkey)}" style="--d:${i}">
           <div class="asm-g">${fanGauge(a)}<b class="asm-p" data-count="${Math.round(a.pct * 100)}" data-suffix="%">${pct(a.pct)}</b></div>
           <div class="asm-t"><b>${esc(a.name)}</b><span>${a.cnt.done}/${a.items.length} מק"טים סופקו${a.cnt.late ? ` · <em class="t-late">${a.cnt.late} בעיכוב</em>` : ''}${a.cnt.missing ? ` · ${a.cnt.missing} לא הוזמנו` : ''}</span></div>
         </button>`).join('')}</div>`;
   }
-  function asmDialog(p, name) {
-    const bp = D.bomProgress(p);
-    const a = bp.assemblies.find((x) => x.name === name); if (!a) return;
+  function asmDialog(bp, name, gkey) {
+    const src = gkey != null && bp.groups ? bp.groups.find((g) => g.key === gkey) : bp;
+    const a = src && src.assemblies.find((x) => x.name === name); if (!a) return;
     const m = D.mapping(); const bm = D.bomMapping();
     UI.modal({
       title: `מכלול ${a.name} · ${pct(a.pct)}`, wide: true,
@@ -961,9 +1018,12 @@
       actions: [{ label: 'סגירה' }],
     });
   }
+  const inBomP = (r, p) => { const v = D.bomProjOf(r); return v ? v === D.norm(p.name) : r.p === p.id; };
+  const bomRoleOf = (id) => { const bm = D.bomMapping(); const r = D.BOM_ROLES.find((x) => bm[x.key] === id); return r ? r.label : ''; };
 
-  /* ================= BOM ================= */
+  /* ================= טבלת BOM (כללית או של פרויקט) ================= */
   function renderBom(v, p) {
+    const bm = D.bomMapping();
     v.innerHTML = `
       <div id="bomSummary" class="bom-summary"></div>
       <div class="toolbar">
@@ -974,70 +1034,224 @@
           <button class="btn btn-soft" id="exp">${icon('download', 16)}<span>ייצוא</span></button>
         </div>
         <div class="tb-group">
-          <button class="icon-btn" id="undo" title="ביטול">${icon('undo', 17)}</button>
-          <button class="icon-btn" id="redo" title="חזרה">${icon('redo', 17)}</button>
-          <button class="icon-btn" id="del" title="מחיקת שורות">${icon('trash', 17)}</button>
+          <button class="icon-btn" id="undo" title="ביטול (Ctrl+Z)" aria-label="ביטול">${icon('undo', 17)}</button>
+          <button class="icon-btn" id="redo" title="חזרה (Ctrl+Y)" aria-label="חזרה">${icon('redo', 17)}</button>
+          <button class="icon-btn" id="bulk" title="הזנת ערך לכל המסומנים (Ctrl+Enter)" aria-label="הזנה מרובה">${icon('wand', 17)}</button>
+          <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקה">${icon('trash', 17)}</button>
         </div>
-        <div class="chips"><span class="muted sm-note">ההשלמה מחושבת לפי התאמת מק"ט להזמנות של ${esc(p.name)}</span></div>
+        <div class="tb-group"><button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button></div>
+        <div class="chips" id="chips"><span class="muted sm-note">המצב של כל מק"ט מחושב מהזמנות הפרויקט שלו</span></div>
       </div>
       <div class="grid-area" id="gridArea"></div>`;
     let cache = null;
-    const prog = () => (cache ||= D.bomProgress(p));
+    const prog = () => (cache ||= p ? D.bomProgress(p) : D.bomProgressAll());
     const virt = [
       { id: '_st', name: 'מצב אספקה', width: 120, type: 'text', virtual: true, get: (r) => { const i = prog().lines.get(r.id); return i ? D.LINE_STATE[i.state].label : ''; } },
       { id: '_got', name: 'סופק', width: 80, type: 'number', virtual: true, get: (r) => { const i = prog().lines.get(r.id); return i && isFinite(i.got) ? i.got : i ? i.req : ''; } },
       { id: '_ord', name: 'הזמנות מקושרות', width: 180, type: 'text', virtual: true, get: (r) => { const i = prog().lines.get(r.id); const m = D.mapping(); return i ? i.orders.map((o) => o.c[m.order]).filter(Boolean).join(', ') : ''; } },
     ];
     const g = new Grid($('#gridArea'), {
-      dataset: 'bom', label: 'BOM ' + p.name, rowHeight,
-      filter: (r) => r.p === p.id,
-      rowProps: () => ({ p: p.id }),
+      dataset: 'bom', label: p ? 'BOM ' + p.name : 'BOM', rowHeight,
+      filter: p ? (r) => inBomP(r, p) : null,
+      defaults: () => (p ? { [bm.project]: p.name } : {}),
       virtualCols: () => { cache = null; return virt; },
-      decorate: (row, col, v, txt) => {
+      colRole: bomRoleOf,
+      decorate: (row, col, val, txt) => {
         if (col.id === '_st' && txt) { const i = prog().lines.get(row.id); return { cls: 'has-chip', html: `<span class="chip ${i.state === 'missing' ? 'c-missing' : 'c-' + D.LINE_STATE[i.state].cls}">${esc(txt)}</span>` }; }
         if (col.virtual) return { cls: 'virtual' };
+        if (!p && col.id === bm.project && txt) { const pc = D.projectColor(txt); if (pc) return { html: `<span class="ptag" style="--pc:${pc}"><i class="pdot"></i>${esc(txt)}</span>` }; }
         return null;
       },
       onStats: (s) => setStatus(statsText(s)),
-      onChange: () => { cache = null; renderBomSummary(); },
-      emptyHtml: `<div><b>אין עדיין BOM לפרויקט</b><p>ייבא קובץ BOM עם עמודות מכלול, מק"ט וכמות — או הוסף שורות ידנית.</p></div>`,
+      onChange: () => { cache = null; const r = D.syncProjects(); r.created.forEach((x) => S.newTabs.add(x.id)); renderTabs(); renderBomSummary(); },
+      onFilter: () => renderChips(),
+      columnMenuExtra: (col) => [{ label: 'תפקיד העמודה…', icon: 'link', action: () => columnsDialog(col.id, 'bom') }],
+      emptyHtml: `<div><b>אין עדיין BOM${p ? ' ל-' + esc(p.name) : ''}</b><p>ייבא את קובץ ה-BOM בכפתור "ייבוא BOM" או בגרירה לחלון. כל שורה צריכה מכלול, מק"ט וכמות${p ? '' : ', ועמודת פרויקט (או שתבחר פרויקט בייבוא)'}.</p></div>`,
     });
-    S.grid = g; S.bomProject = p;
+    S.grid = g;
     $('#q').addEventListener('input', debounce((e) => g.setSearch(e.target.value), 180));
     $('#addRow').onclick = () => { g.appendRows(1); g.focus(); };
     $('#imp').onclick = () => importFlow('bom', p);
-    $('#exp').onclick = () => exportGrid(g, 'BOM ' + p.name);
-    $('#undo').onclick = () => g.undo(); $('#redo').onclick = () => g.redo(); $('#del').onclick = () => g.deleteSelectedRows();
+    $('#exp').onclick = () => exportGrid(g, p ? 'BOM ' + p.name : 'BOM');
+    $('#undo').onclick = () => g.undo(); $('#redo').onclick = () => g.redo();
+    $('#bulk').onclick = () => g.bulkValueDialog(); $('#del').onclick = () => g.deleteSelectedRows();
+    $('#colsBtn').onclick = () => columnsDialog(null, 'bom');
     renderBomSummary();
+    if (S.bomFilter) { g.filters._st = new Set([S.bomFilter]); S.bomFilter = null; g.refresh(); renderChips(); }
+    g.focus();
   }
   function renderBomSummary() {
-    const el = $('#bomSummary'); const p = currentProject(); if (!el || !p) return;
-    const bp = D.bomProgress(p);
-    el.innerHTML = bp.count ? `<section class="card panel">${bomOverview(bp)}</section>` : '';
+    const el = $('#bomSummary'); if (!el) return;
+    const p = currentProject();
+    const bp = p ? D.bomProgress(p) : D.bomProgressAll();
+    if (!bp.count) { el.innerHTML = ''; return; }
+    if (p) el.innerHTML = `<section class="card panel">${bomOverview(bp)}</section>`;
+    else {
+      const t = bp.cnt;
+      el.innerHTML = `<section class="card panel bom-strip"><div class="bom-overall"><b data-count="${Math.round(bp.overall * 100)}" data-suffix="%">${pct(bp.overall)}</b><span>השלמה כוללת · ${fmtN(bp.count)} מק"טים ב-${bp.groups.length} פרויקטים</span></div>
+        <ul class="legend inline">${Object.entries(D.LINE_STATE).map(([k, s]) => `<li><i class="sw ${k === 'missing' ? 'c-missing' : 'c-' + s.cls}"></i><span>${s.label}</span><b>${fmtN(t[k])}</b></li>`).join('')}</ul>
+        <button class="btn btn-ghost sm" data-go-bdash>${icon('chart', 15)}<span>לדשבורד BOM</span></button></section>`;
+      const b = el.querySelector('[data-go-bdash]'); b && (b.onclick = () => go('bom', 'bdash'));
+    }
+    el.querySelectorAll('[data-asm]').forEach((b) => (b.onclick = () => asmDialog(bp, b.dataset.asm)));
     countUp(el, true);
-    el.querySelectorAll('[data-asm]').forEach((b) => (b.onclick = () => asmDialog(p, b.dataset.asm)));
   }
 
-  /* ================= סקירת פרויקטים ================= */
-  function renderOverview(v) {
+  /* ================= השוואת פרויקטים ================= */
+  function compareTable() {
     const ps = Store.projects();
-    const all = D.stats(Store.rows('orders'), S.newDays);
-    v.innerHTML = `
-      ${kpiCards([['all', 'כל ההזמנות', all.total, `ב-${ps.length} פרויקטים`], ['notDone', 'פתוחות', all.notDone, ''], ['supplied', 'סופקו', all.supplied, ''], ['closed', 'סגורות', all.closed, ''], ['delayed', 'בעיכוב', all.delayed, ''], ['new', 'חדשות', all.newer, `ב-${S.newDays} הימים האחרונים`]], all.total, false)}
-      <section class="card panel">
-        <header class="ph"><h2>השוואת פרויקטים</h2></header>
-        ${ps.length ? `<div class="table-wrap"><table class="ov-table"><thead><tr><th>פרויקט</th><th>הזמנות</th><th>פתוחות</th><th>סופקו</th><th>סגורות</th><th>בעיכוב</th><th>חדשות</th><th class="w-bar">התפלגות</th><th>השלמת BOM</th></tr></thead><tbody>
-        ${ps.map((p) => {
-          const s = D.stats(D.projectRows(p), S.newDays); const bp = D.bomProgress(p);
-          const parts = D.CAT_ORDER.filter((k) => s[k]);
-          return `<tr data-p="${p.id}" style="--d:${ps.indexOf(p)}"><td><span class="ptag" style="--pc:${p.color}"><i class="pdot"></i>${esc(p.name)}</span>${Store.isUnlocked(p.id) ? '' : ` <span class="lock">${icon('lock', 12)}</span>`}</td>
-          <td>${s.total}</td><td>${s.notDone}</td><td>${s.supplied}</td><td>${s.closed}</td><td class="${s.delayed ? 't-late' : ''}">${s.delayed}</td><td>${s.newer}</td>
-          <td class="w-bar"><div class="stack thin">${parts.map((k) => `<span class="seg-b c-${k}" style="flex:${s[k]}" data-tip="${D.CATS[k].label}: ${s[k]}"></span>`).join('') || '<span class="seg-b c-missing" style="flex:1"></span>'}</div></td>
-          <td>${bp.count ? `<div class="pbar"><div style="width:${pct(bp.overall)}"></div></div><b class="pnum">${pct(bp.overall)}</b>` : '<span class="muted">—</span>'}</td></tr>`;
-        }).join('')}</tbody></table></div>` : `<div class="empty-mini">${icon('layers', 22)}<p>עוד אין לשוניות פרויקט. אחרי ייבוא הקובץ המערכת תציע לפתוח לשונית לכל פרויקט, או הוסף ידנית עם הכפתור +.</p></div>`}
-      </section>`;
-    v.querySelectorAll('[data-p]').forEach((tr) => (tr.onclick = () => go(tr.dataset.p, 'dashboard')));
+    if (!ps.length) return `<div class="empty-mini">${icon('layers', 22)}<p>עוד אין פרויקטים. הם נפתחים לבד מעמודת הפרויקט בטבלת ההזמנות או ב-BOM.</p></div>`;
+    return `<div class="table-wrap"><table class="ov-table"><thead><tr><th>פרויקט</th><th>הזמנות</th><th>פתוחות</th><th>סופקו</th><th>סגורות</th><th>בעיכוב</th><th>חדשות</th><th class="w-bar">התפלגות</th><th>השלמת BOM</th></tr></thead><tbody>
+      ${ps.map((p, i) => {
+        const s = D.stats(D.projectRows(p), S.newDays); const bp = D.bomProgress(p);
+        const parts = D.CAT_ORDER.filter((k) => s[k]);
+        return `<tr data-p="${p.id}" style="--d:${i}"><td><span class="ptag" style="--pc:${p.color}"><i class="pdot"></i>${esc(p.name)}</span>${Store.isUnlocked(p.id) ? '' : ` <span class="lock">${icon('lock', 12)}</span>`}</td>
+        <td>${fmtN(s.total)}</td><td>${fmtN(s.notDone)}</td><td>${fmtN(s.supplied)}</td><td>${fmtN(s.closed)}</td><td class="${s.delayed ? 't-late' : ''}">${fmtN(s.delayed)}</td><td>${fmtN(s.newer)}</td>
+        <td class="w-bar"><div class="stack thin">${parts.map((k) => `<span class="seg-b c-${k}" style="flex:${s[k]}" data-tip="${D.CATS[k].label}: ${s[k]}"></span>`).join('') || '<span class="seg-b c-missing" style="flex:1"></span>'}</div></td>
+        <td>${bp.count ? `<div class="pbar"><div style="width:${pct(bp.overall)}"></div></div><b class="pnum">${pct(bp.overall)}</b>` : '<span class="muted">—</span>'}</td></tr>`;
+      }).join('')}</tbody></table></div>`;
+  }
+  function bindCommon(v) {
+    v.querySelectorAll('[data-p]').forEach((el) => (el.onclick = () => go(el.dataset.p, 'dashboard')));
+    v.querySelectorAll('[data-nd]').forEach((b) => (b.onclick = () => { S.newDays = +b.dataset.nd; renderMain(false); }));
     bindTips(v);
+  }
+  /** לחיצה על מדד פותחת את טבלת ההזמנות מסוננת */
+  function bindKpiToOrders(v, tab) {
+    v.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => {
+      S.route = { tab, sub: 'orders' }; sessionStorage.setItem('pt.route', JSON.stringify(S.route));
+      renderTabs(); renderMain(); S.catFilter = b.dataset.cf === 'all' ? null : b.dataset.cf; S.grid && (S.grid.refresh(), renderChips());
+    }));
+  }
+  const ordersKpis = (s) => [
+    ['all', 'הזמנות קיימות', s.total, ''],
+    ['notDone', 'נשארו פתוחות', s.notDone, s.total ? pct(s.notDone / s.total) + ' מההזמנות' : ''],
+    ['supplied', 'סופקו', s.supplied, s.total ? pct(s.supplied / s.total) + ' מההזמנות' : ''],
+    ['closed', 'סגורות', s.closed, s.total ? pct(s.closed / s.total) + ' מההזמנות' : ''],
+    ['delayed', 'בעיכוב / דורש טיפול', s.delayed, D.mapping().due ? 'כולל באיחור לפי תאריך' : ''],
+    ['new', 'חדשות', s.newer, `ב-${S.newDays} הימים האחרונים`],
+  ];
+  const newDaysSeg = () => `<div class="seg mini">${[7, 14, 30].map((d) => `<button type="button" data-nd="${d}" class="${S.newDays === d ? 'on' : ''}">${d} ימים</button>`).join('')}</div>`;
+  function lateAndSoon(rows) {
+    const m = D.mapping();
+    const soonEnd = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
+    return `<section class="card panel">
+        <header class="ph"><h2>באיחור</h2><span class="muted">${m.due ? 'לפי תאריך אספקה' : ''}</span></header>
+        ${orderList(rows.filter((r) => D.cat(r) === 'delayed').sort((a, b) => String(a.c[m.due] || '9').localeCompare(String(b.c[m.due] || '9'))).slice(0, 8), 'late')}
+      </section>
+      <section class="card panel">
+        <header class="ph"><h2>אספקות קרובות</h2><span class="muted">14 הימים הבאים</span></header>
+        ${m.due ? orderList(rows.filter((r) => { const d = String(r.c[m.due] || ''); return D.cat(r) === 'open' && d >= D.today() && d <= soonEnd; }).sort((a, b) => String(a.c[m.due]).localeCompare(String(b.c[m.due]))).slice(0, 8), 'soon') : '<p class="muted pad">הגדר עמודת "תאריך אספקה" כדי לראות אספקות קרובות.</p>'}
+      </section>`;
+  }
+  function hero({ color, headline, meta, meter, rings }) {
+    return `<section class="hero" style="--pc:${color}">
+      <div class="hero-fan" aria-hidden="true">${fanSvg(420, true)}</div>
+      <div class="hero-txt"><h2>${esc(headline)}</h2><p>${meta}</p>
+        ${meter ? `<div class="hero-meter"><span>${meter[0]}</span><div class="hm-bar"><i style="--w:${meter[1] * 100}%"></i></div><b data-count="${Math.round(meter[1] * 100)}" data-suffix="%">${pct(meter[1])}</b></div>` : ''}</div>
+      <div class="hero-rings">${rings.map(([v, c, l]) => `<div class="ring-box">${ring(v, 132, c, l)}</div>`).join('')}</div>
+    </section>`;
+  }
+  const onboard = (what) => `<div class="onboard">
+      <div class="ob-card ${Store.rows('orders').length ? 'ok' : ''}"><span class="ob-n">${Store.rows('orders').length ? icon('check', 18) : '1'}</span><b>טבלת ההזמנות</b><p>כל ההזמנות, המק"טים והסטטוס שלהן. ממנה נפתחות לשוניות הפרויקטים.</p><button class="btn btn-primary" data-imp="orders">${icon('upload', 16)}<span>${Store.rows('orders').length ? 'עדכון מקובץ' : 'ייבוא הזמנות'}</span></button></div>
+      <div class="ob-card ${Store.rows('bom').length ? 'ok' : ''}"><span class="ob-n">${Store.rows('bom').length ? icon('check', 18) : '2'}</span><b>טבלת ה-BOM</b><p>מכלולים והמק"טים שמרכיבים אותם. ממנה מחושב אחוז ההשלמה של כל מכלול.</p><button class="btn ${Store.rows('bom').length ? 'btn-soft' : 'btn-primary'}" data-imp="bom">${icon('upload', 16)}<span>${Store.rows('bom').length ? 'עדכון מקובץ' : 'ייבוא BOM'}</span></button></div>
+    </div>`;
+  function bindOnboard(v) { v.querySelectorAll('[data-imp]').forEach((b) => (b.onclick = () => importFlow(b.dataset.imp, null))); }
+
+  /* ================= דשבורד הזמנות (כללי) ================= */
+  function renderOrdersDash(v) {
+    const rows = Store.rows('orders');
+    if (!rows.length) { v.innerHTML = onboard(); return bindOnboard(v); }
+    const s = D.stats(rows, S.newDays);
+    const done = s.supplied + s.closed; const active = s.total - s.cancelled;
+    const delivery = active ? done / active : 0;
+    v.innerHTML = `
+      ${hero({ color: '#2F5BD3', headline: s.delayed ? `${fmtN(s.delayed)} הזמנות דורשות טיפול` : 'כל ההזמנות בזמן', meta: `${fmtN(s.total)} הזמנות ב-${Store.projects().length} פרויקטים · ${fmtN(done)} הושלמו · ${fmtN(s.notDone)} פתוחות`, meter: ['התקדמות אספקה', delivery], rings: [[delivery, 'var(--st-supplied)', 'אספקות הושלמו'], [s.total ? s.delayed / s.total : 0, '#FF9B6A', 'בעיכוב']] })}
+      ${kpiCards(ordersKpis(s), s.total)}
+      <div class="dash-grid">
+        <section class="card panel span2"><header class="ph"><h2>מצב ההזמנות</h2>${newDaysSeg()}</header>${statusBar(s)}</section>
+        <section class="card panel span2"><header class="ph"><h2>לפי פרויקט</h2></header>${compareTable()}</section>
+        ${lateAndSoon(rows)}
+        <section class="card panel span2"><header class="ph"><h2>הזמנות פתוחות לפי ספק</h2></header>${supplierBars(rows)}</section>
+      </div>`;
+    bindKpiToOrders(v, 'main'); bindCommon(v);
+  }
+
+  /* ================= דשבורד BOM (כללי) ================= */
+  function renderBomDash(v) {
+    const bp = D.bomProgressAll();
+    if (!bp.count) { v.innerHTML = onboard(); return bindOnboard(v); }
+    const asmCount = bp.groups.reduce((a, g) => a + g.assemblies.length, 0);
+    const c = bp.cnt;
+    const orderedShare = bp.count ? (c.done + c.ordered + c.late) / bp.count : 0;
+    const tiles = [
+      ['lines', 'שורות BOM', bp.count, `ב-${bp.groups.length} פרויקטים`],
+      ['asm', 'מכלולים', asmCount, `${fmtN(bp.groups.reduce((a, g) => a + g.assemblies.filter((x) => x.pct >= 1).length, 0))} הושלמו`],
+      ['done', 'מק"טים סופקו', c.done, pct(c.done / bp.count)],
+      ['ordered', 'הוזמנו ובדרך', c.ordered, pct(c.ordered / bp.count)],
+      ['late', 'בעיכוב', c.late, pct(c.late / bp.count)],
+      ['missing', 'לא הוזמנו', c.missing, pct(c.missing / bp.count)],
+    ];
+    const bm = D.bomMapping();
+    const missing = [];
+    for (const gr of bp.groups) for (const a of gr.assemblies) for (const i of a.items) if (i.state === 'missing') missing.push([gr, a, i]);
+    v.innerHTML = `
+      ${hero({ color: '#27A86E', headline: `${pct(bp.overall)} מה-BOM הושלם`, meta: `${fmtN(bp.count)} מק"טים · ${fmtN(asmCount)} מכלולים · ${fmtN(c.missing)} מק"טים עוד לא הוזמנו`, meter: ['מק"טים שהוזמנו', orderedShare], rings: [[bp.overall, 'var(--st-supplied)', 'השלמת BOM'], [orderedShare, '#8FB3FF', 'הוזמנו']] })}
+      ${kpiCards(tiles, bp.count)}
+      <div class="dash-grid">
+        <section class="card panel span2"><header class="ph"><h2>השלמה לפי פרויקט</h2></header>
+          <div class="bars proj-bars">${bp.groups.sort((a, b) => a.overall - b.overall).map((g, i) => `<div class="bar-row" ${g.project ? `data-p="${g.project.id}"` : ''} style="--bi:${i}"><span class="bar-l">${g.project ? `<i class="pdot" style="--pc:${g.project.color}"></i> ` : ''}${esc(g.name)}</span>
+            <div class="bar-t"><div class="bar-f" style="width:${Math.max(1, g.overall * 100)}%"><span class="c-supplied" style="flex:1" data-tip="${esc(g.name)} · ${pct(g.overall)} · ${g.count} מק&quot;טים"></span></div></div><b class="bar-v">${pct(g.overall)}</b></div>`).join('')}</div>
+        </section>
+        ${bp.groups.map((g) => `<section class="card panel span2"><header class="ph"><h2>${g.project ? `<i class="pdot" style="--pc:${g.project.color}"></i> ` : ''}מכלולים · ${esc(g.name)}</h2>${g.project ? `<button class="btn btn-ghost sm" data-p="${g.project.id}">${icon('chart', 15)}<span>לדשבורד הפרויקט</span></button>` : ''}</header>${bomOverview(g, g.key)}</section>`).join('')}
+        <section class="card panel span2"><header class="ph"><h2>מק"טים שעוד לא הוזמנו</h2><span class="muted">${fmtN(missing.length)}</span></header>
+          ${missing.length ? `<div class="table-wrap"><table class="mini-table"><thead><tr><th>פרויקט</th><th>מכלול</th><th>מק"ט</th><th>תיאור</th><th>נדרש</th></tr></thead><tbody>${missing.slice(0, 30).map(([gr, a, i]) => `<tr><td>${esc(gr.name)}</td><td>${esc(a.name)}</td><td dir="ltr" class="mono">${esc(i.part ?? '')}</td><td>${esc(i.line.c[bm.desc] ?? '')}</td><td>${fmtN(i.req)}</td></tr>`).join('')}</tbody></table></div>${missing.length > 30 ? `<p class="muted pad">ועוד ${fmtN(missing.length - 30)} — כל הרשימה בטבלת ה-BOM בסינון "לא הוזמן".</p>` : ''}` : '<p class="muted pad">כל המק"טים הוזמנו.</p>'}
+        </section>
+      </div>`;
+    v.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => {
+      const lab = { done: 'סופק', ordered: 'הוזמן', late: 'בעיכוב', missing: 'לא הוזמן' }[b.dataset.cf];
+      S.bomFilter = lab || null; go('bom', 'bomtable');
+    }));
+    v.querySelectorAll('[data-asm]').forEach((b) => (b.onclick = () => asmDialog(bp, b.dataset.asm, b.dataset.g)));
+    bindCommon(v);
+  }
+
+  /* ================= דשבורד משולב — כל הפרויקטים ================= */
+  function renderHome(v) {
+    const ps = Store.projects();
+    const orders = Store.rows('orders');
+    if (!orders.length && !Store.rows('bom').length) {
+      v.innerHTML = `<div class="home-empty">${fanSvg(84)}<h2>מתחילים משני קבצים</h2><p>הזמנות ו-BOM נטענים בנפרד, וכל אחד מקבל לשונית ודשבורד משלו. הדשבורד הזה מחבר בין שניהם לכל פרויקט.</p>${onboard()}</div>`;
+      return bindOnboard(v);
+    }
+    const s = D.stats(orders, S.newDays);
+    const bpa = D.bomProgressAll();
+    const done = s.supplied + s.closed; const active = s.total - s.cancelled;
+    const delivery = active ? done / active : 0;
+    v.innerHTML = `
+      ${hero({ color: '#7E57B0', headline: `${ps.length} פרויקטים · ${fmtN(s.notDone)} הזמנות פתוחות`, meta: `${fmtN(s.total)} הזמנות · ${fmtN(bpa.count)} מק"טים ב-BOM · ${fmtN(s.delayed)} דורשות טיפול`, meter: ['התקדמות אספקה', delivery], rings: [[delivery, 'var(--st-supplied)', 'אספקות הושלמו'], [bpa.overall, '#8FB3FF', bpa.count ? 'השלמת BOM' : 'אין BOM עדיין']] })}
+      ${!orders.length || !Store.rows('bom').length ? onboard() : ''}
+      ${kpiCards(ordersKpis(s), s.total)}
+      <div class="pgrid">${ps.map((p, i) => projectCard(p, i)).join('')}</div>`;
+    bindKpiToOrders(v, 'main'); bindOnboard(v); bindCommon(v);
+  }
+  function projectCard(p, i) {
+    const s = D.stats(D.projectRows(p), S.newDays);
+    const bp = D.bomProgress(p);
+    const done = s.supplied + s.closed; const active = s.total - s.cancelled;
+    const delivery = active ? done / active : 0;
+    const worst = [...bp.assemblies].sort((a, b) => a.pct - b.pct).slice(0, 3);
+    const locked = !Store.isUnlocked(p.id);
+    const st = [['קיימות', s.total, ''], ['פתוחות', s.notDone, 'open'], ['סופקו', s.supplied, 'supplied'], ['סגורות', s.closed, 'closed'], ['בעיכוב', s.delayed, 'delayed'], ['חדשות', s.newer, '']];
+    return `<button class="pcard" type="button" data-p="${p.id}" style="--pc:${p.color};--d:${i}">
+      <header><i class="pdot lg"></i><b>${esc(p.name)}</b>${locked ? `<span class="lock">${icon('lock', 13)}</span>` : ''}<span class="pc-go">${icon('chevron', 16)}</span></header>
+      <div class="pc-body">
+        <div class="pc-ring">${ring(bp.overall, 104, 'var(--st-supplied)', bp.count ? 'BOM' : 'אין BOM', true)}</div>
+        <ul class="pc-stats">${st.map(([l, n, c]) => `<li>${c ? `<i class="sw c-${c}"></i>` : ''}<span>${l}</span><b class="${c === 'delayed' && n ? 't-late' : ''}">${fmtN(n)}</b></li>`).join('')}</ul>
+      </div>
+      <div class="pc-del"><span>אספקות</span><div class="hm-bar"><i style="--w:${delivery * 100}%"></i></div><b>${pct(delivery)}</b></div>
+      ${worst.length ? `<div class="pc-asm"><span class="pc-asm-t">מכלולים שהכי רחוקים מהשלמה</span>${worst.map((a) => `<div class="pc-a"><span>${esc(a.name)}</span><div class="pbar"><div style="width:${pct(a.pct)}"></div></div><b>${pct(a.pct)}</b></div>`).join('')}</div>` : '<div class="pc-asm muted">עוד אין BOM לפרויקט</div>'}
+    </button>`;
   }
 
   /* ================= עזרים ================= */
@@ -1090,7 +1304,7 @@
       const f = e.dataTransfer.files[0];
       if (!f || !canImport()) return;
       const p = currentProject();
-      importFile(p && S.route.sub === 'bom' ? 'bom' : 'orders', p, f);
+      importFile(S.route.tab === 'bom' || S.route.sub === 'bom' ? 'bom' : 'orders', p, f);
     });
   }
   function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
