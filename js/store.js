@@ -329,6 +329,81 @@
     state.timer = setTimeout(syncNow, ms);
   }
 
+  /* ---------- כניסה מכל מכשיר ----------
+   * קובץ access.json במאגר האתר (ציבורי) מחזיק את פרטי מאגר הנתונים ואת טוקן הגישה
+   * מוצפן בנפרד לכל משתמש בסיסמה שלו (PBKDF2 + AES-GCM), ועוד עותק מוצפן ב"קוד צוות"
+   * להרשמת עורכים חדשים. כך במכשיר חדש מספיק שם + סיסמה. */
+  const ACCESS_PATH = 'access.json';
+  function siteRepo() {
+    if (global.PT_SITE_REPO) return global.PT_SITE_REPO;
+    const h = location.hostname.match(/^([^.]+)\.github\.io$/i);
+    const seg = location.pathname.split('/').filter(Boolean)[0];
+    if (h && seg) return { owner: h[1], repo: seg };
+    if (state.cfg && state.cfg.siteOwner) return { owner: state.cfg.siteOwner, repo: state.cfg.siteRepo };
+    return null;
+  }
+  const normName = (first, last) => (first.trim() + ' ' + last.trim()).toLowerCase().replace(/\s+/g, ' ');
+  const nameKey = (first, last) => sha256('pt-user|' + normName(first, last));
+  async function deriveKey(secret, salt) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 210000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+  async function seal(text, secret) {
+    const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await deriveKey(secret, salt);
+    const c = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(text)));
+    return { s: bytesToB64(salt), i: bytesToB64(iv), c: bytesToB64(c) };
+  }
+  async function unseal(entry, secret) {
+    try {
+      const key = await deriveKey(secret, b64ToBytes(entry.s));
+      const out = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(entry.i) }, key, b64ToBytes(entry.c));
+      return new TextDecoder().decode(out);
+    } catch { return null; }
+  }
+  const siteUrl = (sr) => `https://api.github.com/repos/${encodeURIComponent(sr.owner)}/${encodeURIComponent(sr.repo)}/contents/${ACCESS_PATH}`;
+  let accessCache = null;
+  /** קריאת access.json בלי טוקן (המאגר ציבורי) */
+  async function fetchAccess(force) {
+    if (accessCache && !force) return accessCache;
+    const sr = siteRepo();
+    let acc = null, definitive = false;
+    if (sr) {
+      try {
+        const r = await fetch(siteUrl(sr) + '?_=' + now(), { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+        if (r.ok) { const j = await r.json(); acc = JSON.parse(await decodeFile(j.content)); }
+        definitive = r.ok || r.status === 404;
+      } catch (e) { console.warn('access via api failed', e); }
+    }
+    if (!acc && !definitive && sr) {
+      try { const r = await fetch(ACCESS_PATH + '?_=' + now(), { cache: 'no-store' }); if (r.ok) acc = await r.json(); } catch { }
+    }
+    accessCache = acc && acc.data ? acc : null;
+    return accessCache;
+  }
+  /** עדכון access.json (דורש טוקן עם הרשאת כתיבה גם למאגר האתר) */
+  async function writeAccess(mutate) {
+    const sr = siteRepo();
+    if (!sr) throw new Error('לא זוהה מאגר האתר.');
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const g = await fetch(siteUrl(sr) + '?_=' + now(), { headers: ghHeaders(), cache: 'no-store' });
+      let acc = { v: 1, users: [] }, sha;
+      if (g.ok) { const j = await g.json(); sha = j.sha; try { acc = JSON.parse(await decodeFile(j.content)); } catch { } }
+      else if (g.status !== 404) throw await ghError(g);
+      acc.users = acc.users || [];
+      await mutate(acc);
+      const body = { message: 'עדכון הרשאות כניסה', content: b64encode(JSON.stringify(acc, null, 1)) };
+      if (sha) body.sha = sha;
+      const p = await fetch(siteUrl(sr), { method: 'PUT', headers: ghHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) });
+      if (p.status === 409 || p.status === 422) { await new Promise((ok) => setTimeout(ok, 500 * (attempt + 1))); continue; }
+      if (!p.ok) throw await ghError(p);
+      accessCache = acc;
+      return acc;
+    }
+    throw new Error('לא הצלחתי לעדכן את קובץ ההרשאות. נסה שוב.');
+  }
+  const dataInfo = () => ({ owner: state.cfg.owner, repo: state.cfg.repo, branch: state.cfg.branch, path: state.cfg.path });
+
   let _su = null, _suAt = 0;
   function sessionUser() {
     if (now() - _suAt > 2000) { const s = Store.session; _su = s && s.userId; _suAt = now(); }
@@ -413,7 +488,7 @@
     register(first, last, pw) {
       first = first.trim(); last = last.trim();
       if (!first || !last) throw new Error('צריך למלא שם פרטי ושם משפחה.');
-      if (pw.length < 4) throw new Error('הסיסמה צריכה להכיל לפחות 4 תווים.');
+      if (pw.length < 8) throw new Error('הסיסמה צריכה להכיל לפחות 8 תווים (היא גם מצפינה את הגישה לנתונים מכל מכשיר).');
       const key = (first + ' ' + last).toLowerCase();
       if (state.db.users.some((u) => !u.deleted && (u.first + ' ' + u.last).toLowerCase() === key)) throw new Error('משתמש בשם הזה כבר רשום. אפשר להתחבר במקום להירשם.');
       const salt = uid();
@@ -434,6 +509,58 @@
       return u;
     },
     logout() { _suAt = 0; sessionStorage.removeItem(LS_SESSION); localStorage.removeItem(LS_SESSION); sessionStorage.removeItem('pt.unlocked'); },
+
+    /* ---------- כניסה מכל מכשיר ---------- */
+    siteRepo,
+    fetchAccess,
+    get remoteReady() { return !!(state.cfg && state.cfg.mode === 'github'); },
+    /** מאפשר למשתמש להיכנס מכל מכשיר עם שם + סיסמה */
+    async enableRemoteLogin(user, password) {
+      if (!this.remoteReady) return false;
+      const entry = await seal(state.cfg.token, password);
+      entry.u = nameKey(user.first, user.last);
+      await writeAccess((acc) => {
+        acc.data = dataInfo();
+        acc.users = acc.users.filter((x) => x.u !== entry.u).concat(entry);
+      });
+      return true;
+    },
+    async hasRemoteLogin(user) {
+      const acc = await fetchAccess(true);
+      return !!(acc && acc.users.some((x) => x.u === nameKey(user.first, user.last)));
+    },
+    async setTeamCode(code) {
+      if (!this.remoteReady) throw new Error('צריך קודם לחבר את המערכת לגיטהאב.');
+      if (code.length < 6) throw new Error('קוד הצוות צריך להכיל לפחות 6 תווים.');
+      const team = await seal(state.cfg.token, code);
+      await writeAccess((acc) => { acc.data = dataInfo(); acc.team = team; });
+    },
+    /** כניסה ממכשיר שעוד לא מחובר: מפענח את הטוקן בעזרת הסיסמה ומתחבר לנתונים */
+    async remoteLogin(first, last, password) {
+      const acc = await fetchAccess(true);
+      if (!acc) throw new Error('המערכת עוד לא מחוברת לענן. היכנס מהמכשיר הראשי או חבר את המערכת לגיטהאב.');
+      const entry = acc.users.find((x) => x.u === nameKey(first, last));
+      if (!entry) throw new Error('לא נמצא משתמש בשם הזה. בדוק את האיות, או הירשם עם קוד הצוות.');
+      const token = await unseal(entry, password);
+      if (!token) throw new Error('הסיסמה שגויה.');
+      await this.connect(Object.assign({ mode: 'github' }, acc.data, { token }));
+      return this.login(first, last, password, true);
+    },
+    /** הצטרפות ממכשיר חדש בעזרת קוד הצוות (לפני הרשמה) */
+    async remoteJoin(code) {
+      const acc = await fetchAccess(true);
+      if (!acc || !acc.team) throw new Error('עוד לא הוגדר קוד צוות. בקש ממנהל המערכת להגדיר אותו (תפריט המשתמש ← קוד צוות).');
+      const token = await unseal(acc.team, code);
+      if (!token) throw new Error('קוד הצוות שגוי.');
+      await this.connect(Object.assign({ mode: 'github' }, acc.data, { token }));
+    },
+    async checkSiteWrite() {
+      const sr = siteRepo(); if (!sr || !this.remoteReady) return null;
+      const r = await fetch(`https://api.github.com/repos/${encodeURIComponent(sr.owner)}/${encodeURIComponent(sr.repo)}`, { headers: ghHeaders(), cache: 'no-store' });
+      if (!r.ok) return false;
+      const j = await r.json();
+      return !!(j.permissions && j.permissions.push);
+    },
 
     /* ---------- פרויקטים ---------- */
     projects() { return state.db.projects.filter((p) => !p.deleted).sort((a, b) => a.order - b.order); },

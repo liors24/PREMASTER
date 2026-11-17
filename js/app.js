@@ -19,6 +19,7 @@
     density: localStorage.getItem('pt.density') || 'normal',
     expanded: null,
     newTabs: new Set(),
+    pw: null, // סיסמת המשתמש בזיכרון בלבד (לא נשמרת) — להפעלת כניסה מכל מכשיר
   };
   const rowHeight = () => DENSITY[S.density] || 36;
 
@@ -86,7 +87,7 @@
           <label class="field"><span>טוקן גישה (Fine-grained token)</span><input name="token" type="password" required value="${esc(c.token)}" dir="ltr" placeholder="github_pat_…"></label>
           <details class="help"><summary>איך יוצרים טוקן?</summary>
             <ol><li>בגיטהאב: Settings ← Developer settings ← Personal access tokens ← Fine-grained tokens ← Generate new token.</li>
-            <li>תחת Repository access בחר <b>רק</b> את מאגר הנתונים.</li>
+            <li>תחת Repository access בחר <b>רק</b> שני מאגרים: את מאגר הנתונים ואת מאגר האתר (${esc((Store.siteRepo() || { repo: 'PREMASTER' }).repo)}) — כך אפשר להיכנס מכל מכשיר עם שם וסיסמה.</li>
             <li>תחת Permissions ← Repository permissions ← Contents בחר <b>Read and write</b>.</li>
             <li>מומלץ שמאגר הנתונים יהיה <b>פרטי (Private)</b>.</li></ol></details>
           <div class="form-actions">
@@ -109,6 +110,7 @@
         await Store.connect(cfg);
         if (!t.private) UI.toast('שים לב: המאגר ציבורי — כל אחד יכול לקרוא את הנתונים. מומלץ להפוך אותו לפרטי.', 'error', 7000);
         Store.currentUser() ? renderShell() : renderAuth();
+        afterConnect().catch(remoteErr);
       } catch (err) { msg.className = 'form-msg err'; msg.textContent = err.message; }
       finally { btn.disabled = false; }
     });
@@ -121,6 +123,7 @@
   /* ================= הרשמה וכניסה ================= */
   function renderAuth(mode) {
     const hasUsers = Store.db.users.some((u) => !u.deleted);
+    const explicit = !!mode;
     mode = mode || (hasUsers ? 'login' : 'register');
     app.innerHTML = `
     <div class="gate">
@@ -135,13 +138,15 @@
             <button type="button" role="tab" data-m="register" class="${mode === 'register' ? 'on' : ''}">הרשמה ראשונית</button>
           </div>
           <h1>${mode === 'login' ? 'כניסת עורכים' : 'יצירת משתמש עורך'}</h1>
-          <p class="muted">${mode === 'login' ? 'היכנס עם השם והסיסמה שקבעת בהרשמה.' : 'פעם אחת בלבד: שם, שם משפחה וסיסמה. אחרי זה נכנסים מכל מכשיר מחובר.'}</p>
+          <p class="muted">${mode === 'login' ? 'היכנס עם השם והסיסמה שקבעת בהרשמה — מכל מכשיר.' : 'פעם אחת בלבד: שם, שם משפחה וסיסמה. אחרי זה נכנסים עם אותם פרטים מכל מכשיר.'}</p>
           <div class="grid2">
             <label class="field"><span>שם פרטי</span><input name="first" required autocomplete="given-name"></label>
             <label class="field"><span>שם משפחה</span><input name="last" required autocomplete="family-name"></label>
           </div>
-          <label class="field"><span>סיסמה</span><input name="pw" type="password" required autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}"></label>
-          ${mode === 'register' ? '<label class="field"><span>אימות סיסמה</span><input name="pw2" type="password" required autocomplete="new-password"></label>' : '<label class="chk"><input type="checkbox" name="remember" checked><span>להישאר מחובר במכשיר הזה</span></label>'}
+          <label class="field"><span>סיסמה${mode === 'register' ? ' (לפחות 8 תווים)' : ''}</span><input name="pw" type="password" required ${mode === 'register' ? 'minlength="8"' : ''} autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}"></label>
+          ${mode === 'register' ? `<label class="field"><span>אימות סיסמה</span><input name="pw2" type="password" required minlength="8" autocomplete="new-password"></label>
+            <label class="field" data-teamwrap hidden><span>קוד צוות (מקבלים ממנהל המערכת)</span><input name="team" type="password" autocomplete="off"></label>` : '<label class="chk"><input type="checkbox" name="remember" checked><span>להישאר מחובר במכשיר הזה</span></label>'}
+          <div class="cloud-note" data-cloud hidden>${icon('cloud', 16)}<span></span></div>
           <div class="form-actions"><button class="btn btn-primary" type="submit">${icon(mode === 'login' ? 'user' : 'plus', 16)}<span>${mode === 'login' ? 'כניסה' : 'הרשמה וכניסה'}</span></button></div>
           <p class="form-msg err" role="alert"></p>
           <button type="button" class="link-btn" id="toSetup">${icon('settings', 14)} הגדרות חיבור</button>
@@ -152,21 +157,82 @@
     $('[data-theme-toggle]').addEventListener('click', (e) => Theme.toggle(e.currentTarget));
     $('#toSetup').addEventListener('click', () => renderSetup());
     const f = $('#authForm');
+    // האם קיימת מערכת משותפת בענן? (ואז במכשיר הזה נכנסים איתה)
+    let remote = null;
+    const showCloud = (acc) => {
+      remote = Store.cfg.mode === 'github' ? null : acc;
+      const note = $('[data-cloud]', f);
+      if (Store.cfg.mode === 'github') { note.hidden = false; $('span', note).textContent = 'מחובר לנתונים המשותפים. משתמשים ונתונים זהים בכל המכשירים.'; return; }
+      if (!acc) return;
+      // מכשיר חדש במערכת שכבר קיימת בענן: ברירת המחדל היא כניסה, לא הרשמה
+      if (!explicit && mode === 'register' && !f.first.value) return renderAuth('login');
+      note.hidden = false;
+      $('span', note).textContent = mode === 'login' ? 'המערכת משותפת בענן: אחרי הכניסה המכשיר הזה יתחבר לנתונים של כולם.' : 'המערכת משותפת בענן: כדי להירשם ממכשיר חדש צריך קוד צוות.';
+      const tw = $('[data-teamwrap]', f); if (tw) { tw.hidden = false; tw.querySelector('input').required = true; }
+    };
+    Store.fetchAccess().then(showCloud).catch(() => {});
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = Object.fromEntries(new FormData(f));
-      const msg = $('.form-msg', f);
+      const msg = $('.form-msg', f); const btn = $('button[type=submit]', f);
+      btn.disabled = true; msg.className = 'form-msg'; msg.textContent = remote ? 'מתחבר לנתונים המשותפים…' : '';
       try {
-        await Store.syncNow();
         if (mode === 'register') {
           if (fd.pw !== fd.pw2) throw new Error('הסיסמאות אינן תואמות.');
-          Store.register(fd.first, fd.last, fd.pw);
+          if (fd.pw.length < 8) throw new Error('הסיסמה צריכה להכיל לפחות 8 תווים.');
+          if (remote) await Store.remoteJoin(fd.team || '');
+          await Store.syncNow();
+          const u = Store.register(fd.first, fd.last, fd.pw);
           await Store.syncNow();
           Store.login(fd.first, fd.last, fd.pw, true);
-        } else Store.login(fd.first, fd.last, fd.pw, !!fd.remember);
+          S.pw = fd.pw;
+          if (Store.remoteReady) Store.enableRemoteLogin(u, fd.pw).then(() => UI.toast('נרשמת. מעכשיו אפשר להיכנס עם השם והסיסמה מכל מכשיר.', 'ok', 5000)).catch(remoteErr);
+        } else {
+          if (remote) await Store.remoteLogin(fd.first, fd.last, fd.pw);
+          else { await Store.syncNow(); Store.login(fd.first, fd.last, fd.pw, !!fd.remember); }
+          S.pw = fd.pw;
+          ensureRemoteLogin();
+        }
         renderShell();
-      } catch (err) { msg.textContent = err.message; }
+      } catch (err) { msg.className = 'form-msg err'; msg.textContent = err.message; }
+      finally { btn.disabled = false; }
     });
+  }
+  function remoteErr(e) {
+    console.warn(e);
+    UI.toast('הכניסה ממכשירים אחרים עדיין לא פעילה: ' + e.message, 'error', 9000);
+  }
+  /** משתמש שנכנס במכשיר מחובר ועוד אין לו כניסה מרחוק — מוסיפים לו */
+  function ensureRemoteLogin() {
+    const u = Store.currentUser();
+    if (!Store.remoteReady || !u || !S.pw) return;
+    Store.hasRemoteLogin(u).then((has) => { if (!has) return Store.enableRemoteLogin(u, S.pw); }).catch(remoteErr);
+  }
+  async function afterConnect() {
+    const u = Store.currentUser();
+    const canWrite = await Store.checkSiteWrite().catch(() => null);
+    const sr = Store.siteRepo();
+    if (canWrite === false) {
+      UI.toast(`הנתונים מחוברים, אבל כדי שאפשר יהיה להיכנס מכל מכשיר עם שם וסיסמה, צריך להוסיף לטוקן גם את המאגר ${sr ? sr.repo : 'של האתר'} עם הרשאת Contents: Read and write.`, 'error', 12000);
+      return;
+    }
+    if (u) {
+      let pw = S.pw;
+      if (!pw) {
+        pw = await UI.prompt('כניסה מכל מכשיר', 'הזן את הסיסמה שלך כדי לאפשר כניסה עם שם וסיסמה ממכשירים אחרים', '', 'אישור');
+        if (!pw) return;
+        try { Store.login(u.first, u.last, pw, true); } catch (e) { return UI.toast(e.message, 'error'); }
+      }
+      await Store.enableRemoteLogin(u, pw).catch(remoteErr);
+    }
+    const acc = await Store.fetchAccess(true).catch(() => null);
+    if (acc && !acc.team) teamCodeDialog(true);
+  }
+  async function teamCodeDialog(first) {
+    const code = await UI.prompt('קוד צוות', `${first ? 'הגדר קוד צוות: עורכים חדשים יזינו אותו פעם אחת בהרשמה ממכשיר חדש. ' : ''}לפחות 6 תווים. מי שכבר רשום לא צריך אותו.`, '', 'שמירת קוד');
+    if (!code) return;
+    try { await Store.setTeamCode(code); UI.toast('קוד הצוות נשמר. שתף אותו רק עם עורכים מורשים.', 'ok', 5000); }
+    catch (e) { UI.toast(e.message, 'error', 7000); }
   }
 
   /* ================= מעטפת ================= */
@@ -289,6 +355,7 @@
     const u = Store.currentUser();
     UI.menu(r.right, r.bottom + 6, [
       { title: `${u.first} ${u.last}` },
+      Store.cfg.mode === 'github' ? { label: 'קוד צוות להרשמת עורכים…', icon: 'lock', action: () => teamCodeDialog(false) } : null,
       Store.cfg.mode === 'github' ? { label: 'קישור חיבור למכשיר נוסף', icon: 'link', action: shareLink } : { label: 'חיבור לגיטהאב (סנכרון בין מכשירים)', icon: 'cloud', action: () => renderSetup() },
       { label: 'עורכים רשומים', icon: 'user', action: usersDialog },
       { label: 'גיבוי נתונים (JSON)', icon: 'download', action: () => download(new Blob([Store.exportJson()], { type: 'application/json' }), `procurement-backup-${D.today()}.json`) },
