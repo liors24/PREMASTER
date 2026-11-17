@@ -57,6 +57,18 @@
     for (const ch of ref) { const c = ch.charCodeAt(0); if (c < 65 || c > 90) break; n = n * 26 + (c - 64); }
     return n - 1;
   }
+  const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+  function unesc(s) {
+    if (s.indexOf('&') < 0) return s;
+    return s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) => e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : +e.slice(1)) : (ENT[e] ?? m));
+  }
+  function textOf(fragment) {
+    // מחבר את כל ה-<t> (טקסט עשיר), בלי טקסט פונטי <rPh>
+    fragment = fragment.replace(/<(?:\w+:)?rPh\b[\s\S]*?<\/(?:\w+:)?rPh>/g, '');
+    let out = ''; const re = /<(?:\w+:)?t(?:\s[^>]*)?>([\s\S]*?)<\/(?:\w+:)?t>/g; let m;
+    while ((m = re.exec(fragment))) out += m[1];
+    return unesc(out);
+  }
   function serialToISO(v) {
     const ms = Math.round((v - 25569) * 86400000);
     const d = new Date(ms);
@@ -83,7 +95,12 @@
 
     const shared = [];
     const ssText = await zip.text(baseDir + 'sharedStrings.xml');
-    if (ssText) for (const si of tags(xml(ssText), 'si')) shared.push(tags(si, 't').map((t) => t.textContent).join(''));
+    if (ssText) {
+      // פענוח מהיר בביטויים רגולריים — מהיר פי כמה מ-DOM בקבצים גדולים
+      const siRe = /<(?:\w+:)?si>([\s\S]*?)<\/(?:\w+:)?si>|<(?:\w+:)?si\/>/g;
+      let m;
+      while ((m = siRe.exec(ssText))) shared.push(m[1] ? textOf(m[1]) : '');
+    }
 
     // זיהוי תאי תאריך לפי סגנון
     const dateStyles = new Set();
@@ -110,28 +127,38 @@
       else target = baseDir + target;
       const text = await zip.text(target);
       if (!text) continue;
-      const doc = xml(text);
       const rows = [];
-      for (const r of tags(doc, 'row')) {
-        const ri = (+r.getAttribute('r') || rows.length + 1) - 1;
+      const rowRe = /<(?:\w+:)?row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?row>)/g;
+      const cellRe = /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
+      let rm, rowCount = 0;
+      while ((rm = rowRe.exec(text))) {
+        const rAttr = /\br="(\d+)"/.exec(rm[1]);
+        const ri = (rAttr ? +rAttr[1] : rowCount + 1) - 1;
+        rowCount = ri + 1;
         const arr = [];
-        let ci = 0;
-        for (const c of tags(r, 'c')) {
-          const ref = c.getAttribute('r');
-          if (ref) ci = colIndex(ref);
-          const t = c.getAttribute('t');
-          const vEl = tags(c, 'v')[0];
-          let v = vEl ? vEl.textContent : '';
-          if (t === 's') v = shared[+v] ?? '';
-          else if (t === 'inlineStr') v = tags(c, 't').map((x) => x.textContent).join('');
-          else if (t === 'b') v = v === '1' ? 'TRUE' : 'FALSE';
-          else if (t !== 'str' && t !== 'e' && v !== '') {
-            const num = +v;
-            if (dateStyles.has(+c.getAttribute('s')) && num > 0 && num < 2958466) v = serialToISO(num);
-            else if (!isNaN(num)) v = Math.round(num * 1e9) / 1e9;
+        if (rm[2]) {
+          let cm, ci = 0;
+          cellRe.lastIndex = 0;
+          while ((cm = cellRe.exec(rm[2]))) {
+            const at = cm[1];
+            const ref = /\br="([A-Z]+)/.exec(at);
+            if (ref) ci = colIndex(ref[1]);
+            const t = (/\bt="(\w+)"/.exec(at) || [])[1];
+            const st = (/\bs="(\d+)"/.exec(at) || [])[1];
+            const inner = cm[2] || '';
+            const vm = /<(?:\w+:)?v>([\s\S]*?)<\/(?:\w+:)?v>/.exec(inner);
+            let v = vm ? unesc(vm[1]) : '';
+            if (t === 's') v = shared[+v] ?? '';
+            else if (t === 'inlineStr') v = textOf(inner);
+            else if (t === 'b') v = v === '1' ? 'TRUE' : 'FALSE';
+            else if (t !== 'str' && t !== 'e' && v !== '') {
+              const num = +v;
+              if (st != null && dateStyles.has(+st) && num > 0 && num < 2958466) v = serialToISO(num);
+              else if (!isNaN(num)) v = Math.round(num * 1e9) / 1e9;
+            }
+            arr[ci] = v;
+            ci++;
           }
-          arr[ci] = v;
-          ci++;
         }
         rows[ri] = arr;
       }

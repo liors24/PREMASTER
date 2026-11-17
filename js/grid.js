@@ -726,7 +726,8 @@
       };
       fn(api);
       if (!before.size) return;
-      const after = [...before.keys()].map((id) => clone(ds.rows.find((r) => r.id === id)));
+      const idx = new Map(ds.rows.map((r) => [r.id, r]));
+      const after = [...before.keys()].map((id) => clone(idx.get(id)));
       this.undoStack.push({ before: [...before.values()], after });
       if (this.undoStack.length > 150) this.undoStack.shift();
       this.redoStack = [];
@@ -736,10 +737,11 @@
     }
     applySnaps(snaps) {
       const ds = this.dsObj;
+      const pos = new Map(ds.rows.map((r, i) => [r.id, i]));
       for (const s of snaps) {
         const copy = clone(s); copy.updatedAt = Store.now(); copy.by = Store.session && Store.session.userId;
-        const i = ds.rows.findIndex((r) => r.id === s.id);
-        if (i >= 0) ds.rows[i] = copy; else ds.rows.push(copy);
+        const i = pos.get(s.id);
+        if (i != null) ds.rows[i] = copy; else { pos.set(s.id, ds.rows.length); ds.rows.push(copy); }
       }
       Store.commit(); this.refresh(true); this.o.onChange && this.o.onChange();
     }

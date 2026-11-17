@@ -36,14 +36,14 @@
     if (!m) return;
     try {
       const cfg = JSON.parse(decodeURIComponent(escape(atob(decodeURIComponent(m[1])))));
-      if (cfg.owner && cfg.repo && cfg.token) localStorage.setItem('pt.cfg.v1', JSON.stringify(Object.assign({ mode: 'github', branch: 'main', path: 'data/procurement-db.json' }, cfg)));
+      if (cfg.owner && cfg.repo && cfg.token) localStorage.setItem('pt.cfg.v1', JSON.stringify(Object.assign({ mode: 'github', branch: 'main', path: 'data/procurement-db.json.gz' }, cfg)));
     } catch (e) { console.warn(e); }
     history.replaceState(null, '', location.pathname + location.search);
   }
 
   /* ================= מסך חיבור ================= */
   function renderSetup(prefill) {
-    const c = Object.assign({ owner: '', repo: '', branch: 'main', path: 'data/procurement-db.json', token: '' }, prefill || (Store.cfg && Store.cfg.mode === 'github' ? Store.cfg : {}));
+    const c = Object.assign({ owner: '', repo: '', branch: 'main', path: 'data/procurement-db.json.gz', token: '' }, prefill || (Store.cfg && Store.cfg.mode === 'github' ? Store.cfg : {}));
     app.innerHTML = `
     <div class="gate">
       <section class="gate-art" aria-hidden="true">${fanSvg(340, true)}
@@ -77,7 +77,7 @@
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
       const fd = Object.fromEntries(new FormData(f));
-      const cfg = { mode: 'github', owner: fd.owner.trim(), repo: fd.repo.trim(), branch: fd.branch.trim() || 'main', path: fd.path.trim() || 'data/procurement-db.json', token: fd.token.trim() };
+      const cfg = { mode: 'github', owner: fd.owner.trim(), repo: fd.repo.trim(), branch: fd.branch.trim() || 'main', path: fd.path.trim() || 'data/procurement-db.json.gz', token: fd.token.trim() };
       const msg = $('.form-msg', f); const btn = $('button[type=submit]', f);
       btn.disabled = true; msg.className = 'form-msg'; msg.textContent = 'בודק חיבור…';
       try {

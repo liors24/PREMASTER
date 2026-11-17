@@ -113,6 +113,51 @@
     return db;
   }
 
+  /* ---------- אחסון מקומי: IndexedDB (ללא מגבלת 5MB של localStorage) ---------- */
+  const IDB = {
+    db: null,
+    open() {
+      if (this.db) return Promise.resolve(this.db);
+      return new Promise((ok, fail) => {
+        if (!global.indexedDB) return fail(new Error('no idb'));
+        const r = indexedDB.open('procurement-tracker', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('kv');
+        r.onsuccess = () => { this.db = r.result; ok(this.db); };
+        r.onerror = () => fail(r.error);
+      });
+    },
+    async get(k) { const db = await this.open(); return new Promise((ok, fail) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => ok(q.result); q.onerror = () => fail(q.error); }); },
+    async set(k, v) { const db = await this.open(); return new Promise((ok, fail) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => ok(); t.onerror = () => fail(t.error); }); },
+  };
+  const channel = global.BroadcastChannel ? new BroadcastChannel('procurement-tracker') : null;
+
+  /* ---------- דחיסה (gzip) — קובץ של 10,000 שורות קטן פי ~10 ---------- */
+  const canGzip = typeof CompressionStream !== 'undefined' && typeof DecompressionStream !== 'undefined';
+  async function gzip(str) {
+    const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  async function gunzip(bytes) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return new Response(stream).text();
+  }
+  function bytesToB64(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  function b64ToBytes(b64) {
+    const bin = atob(b64.replace(/\s/g, ''));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+  async function decodeFile(b64) {
+    const bytes = b64ToBytes(b64);
+    if (bytes[0] === 0x1f && bytes[1] === 0x8b) return gunzip(bytes);
+    return new TextDecoder().decode(bytes);
+  }
+
   /* ---------- base64 UTF-8 ---------- */
   function b64encode(str) {
     const bytes = new TextEncoder().encode(str);
@@ -151,12 +196,24 @@
     try { return JSON.parse(localStorage.getItem(LS_CFG)) || null; } catch { return null; }
   }
   function saveCfg(cfg) { state.cfg = cfg; localStorage.setItem(LS_CFG, JSON.stringify(cfg)); }
-  function cacheLocal() {
-    try { localStorage.setItem(LS_DB, JSON.stringify(state.db)); } catch (e) { console.warn('local cache full', e); }
+  let cacheTimer = 0;
+  function cacheLocal(now) {
+    clearTimeout(cacheTimer);
+    const run = async () => {
+      try { await IDB.set('db', state.db); localStorage.removeItem(LS_DB); channel && channel.postMessage('db'); }
+      catch (e) {
+        console.warn('IDB failed, falling back to localStorage', e);
+        try { localStorage.setItem(LS_DB, JSON.stringify(state.db)); } catch (e2) { emit('status', { status: 'error', message: 'אין מקום לשמירה מקומית בדפדפן. חבר את המערכת לגיטהאב כדי לשמור את הנתונים.' }); }
+      }
+    };
+    if (now) return run();
+    cacheTimer = setTimeout(run, 400);
   }
-  function loadLocal() {
-    try { return normalizeDb(JSON.parse(localStorage.getItem(LS_DB))); } catch { return emptyDb(); }
+  async function loadLocal() {
+    try { const d = await IDB.get('db'); if (d) return normalizeDb(d); } catch (e) { console.warn(e); }
+    try { return normalizeDb(JSON.parse(localStorage.getItem(LS_DB))); } catch { return emptyDb(); } // מעבר מגרסה קודמת
   }
+  global.addEventListener && global.addEventListener('pagehide', () => { if (cacheTimer) cacheLocal(true); });
 
   function ghHeaders(extra = {}) {
     return Object.assign({
@@ -180,20 +237,23 @@
     if (!res.ok) throw await ghError(res);
     const etag = res.headers.get('ETag');
     const meta = await res.json();
+    if (meta.sha && meta.sha === state.sha) { state.etag = etag; return { unchanged: true }; } // זו הגרסה ששמרנו בעצמנו
     let text;
-    if (meta.content && meta.encoding === 'base64') text = b64decode(meta.content);
+    if (meta.content && meta.encoding === 'base64') text = await decodeFile(meta.content);
     else {
       // קובץ גדול מ-1MB: נקרא דרך blob API
       const r2 = await fetch(`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}/git/blobs/${meta.sha}`, { headers: ghHeaders(), cache: 'no-store' });
       if (!r2.ok) throw await ghError(r2);
       const blob = await r2.json();
-      text = b64decode(blob.content);
+      text = await decodeFile(blob.content);
     }
     return { sha: meta.sha, etag, data: text ? JSON.parse(text) : null };
   }
   async function ghPut(json, sha) {
     const c = state.cfg;
-    const body = { message: `עדכון נתונים · ${new Date().toISOString()}`, content: b64encode(json), branch: c.branch };
+    const zipped = canGzip && /\.gz$/i.test(c.path);
+    const content = zipped ? bytesToB64(await gzip(json)) : b64encode(json);
+    const body = { message: `עדכון נתונים · ${new Date().toISOString()}`, content, branch: c.branch };
     if (sha) body.sha = sha;
     const res = await fetch(contentsUrl(), { method: 'PUT', headers: ghHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) });
     if (res.status === 409 || res.status === 422) return { conflict: true };
@@ -247,7 +307,7 @@
 
   async function syncNow() {
     if (!state.cfg) return;
-    if (state.cfg.mode === 'local') { cacheLocal(); setStatus('local', 'שמירה מקומית בדפדפן'); return; }
+    if (state.cfg.mode === 'local') { await cacheLocal(true); setStatus('local', 'שמירה מקומית בדפדפן'); return; }
     if (state.busy) { schedule(800); return; }
     state.busy = true;
     try {
@@ -268,6 +328,12 @@
     state.timer = setTimeout(syncNow, ms);
   }
 
+  let _su = null, _suAt = 0;
+  function sessionUser() {
+    if (now() - _suAt > 2000) { const s = Store.session; _su = s && s.userId; _suAt = now(); }
+    return _su;
+  }
+
   /* ---------- API ציבורי ---------- */
   const Store = {
     uid, now, sha256, hashPassword,
@@ -278,7 +344,7 @@
 
     async init() {
       state.cfg = loadCfg();
-      state.db = loadLocal();
+      state.db = await loadLocal();
       if (!state.cfg) return { needsSetup: true };
       if (state.cfg.mode === 'github') {
         setStatus('saving', 'טוען מגיטהאב…');
@@ -291,9 +357,9 @@
         }
         this.startPolling();
       } else setStatus('local', 'שמירה מקומית בדפדפן');
-      window.addEventListener('storage', (ev) => {
-        if (ev.key === LS_DB && state.cfg && state.cfg.mode === 'local') { state.db = loadLocal(); emit('remote'); }
-      });
+      if (channel) channel.onmessage = async () => {
+        if (state.cfg && state.cfg.mode === 'local') { state.db = await loadLocal(); emit('remote'); }
+      };
       return { needsSetup: false };
     },
 
@@ -311,7 +377,7 @@
     async connect(cfg) {
       saveCfg(cfg); state.sha = null; state.etag = null;
       if (cfg.mode === 'github') { await pull(); if (!state.sha) { state.version++; await push(); } this.startPolling(); setStatus('synced', 'מסונכרן'); }
-      else { cacheLocal(); setStatus('local', 'שמירה מקומית בדפדפן'); }
+      else { await cacheLocal(true); setStatus('local', 'שמירה מקומית בדפדפן'); }
     },
     disconnect() { localStorage.removeItem(LS_CFG); state.cfg = null; clearInterval(state.poller); },
 
@@ -335,7 +401,7 @@
     columns(ds) { return state.db.datasets[ds].columns.filter((c) => !c.deleted).sort((a, b) => a.order - b.order); },
     rows(ds) { return state.db.datasets[ds].rows.filter((r) => !r.deleted); },
     rowById(ds, id) { return state.db.datasets[ds].rows.find((r) => r.id === id); },
-    touch(rec) { rec.updatedAt = now(); rec.by = Store.session && Store.session.userId; return rec; },
+    touch(rec) { rec.updatedAt = now(); rec.by = sessionUser(); return rec; },
 
     /* ---------- משתמשים ---------- */
     get session() { try { return JSON.parse(sessionStorage.getItem(LS_SESSION) || localStorage.getItem(LS_SESSION)); } catch { return null; } },
@@ -358,12 +424,13 @@
       const u = state.db.users.find((x) => !x.deleted && (x.first + ' ' + x.last).toLowerCase() === key);
       if (!u) throw new Error('לא נמצא משתמש בשם הזה. בדוק את האיות או הירשם.');
       if (hashPassword(pw, u.salt) !== u.hash) throw new Error('הסיסמה שגויה.');
+      _suAt = 0;
       const s = JSON.stringify({ userId: u.id, at: now() });
       sessionStorage.setItem(LS_SESSION, s);
       if (remember) localStorage.setItem(LS_SESSION, s); else localStorage.removeItem(LS_SESSION);
       return u;
     },
-    logout() { sessionStorage.removeItem(LS_SESSION); localStorage.removeItem(LS_SESSION); sessionStorage.removeItem('pt.unlocked'); },
+    logout() { _suAt = 0; sessionStorage.removeItem(LS_SESSION); localStorage.removeItem(LS_SESSION); sessionStorage.removeItem('pt.unlocked'); },
 
     /* ---------- פרויקטים ---------- */
     projects() { return state.db.projects.filter((p) => !p.deleted).sort((a, b) => a.order - b.order); },
