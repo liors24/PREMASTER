@@ -1361,3 +1361,7 @@ body.is-scrolling .grid-mark i { animation-play-state: paused; }
 :root[data-theme="dark"] .menu, :root[data-theme="dark"] .colp, :root[data-theme="dark"] .colp-side, :root[data-theme="dark"] .col-search { background: rgba(26, 42, 68, .5) !important; }
 .colp-more, .colp-q, .colp-sort button { background: rgba(255, 255, 255, .45); }
 .menu-item, .colp .chk, .colp-t b { font-weight: 500; }
+/* לוגו הרקע: חד ומפורט, אבל מעורפל וחלש כדי שהטבלה תישאר ברורה */
+.grid-mark i { width: min(72%, 640px); animation-duration: 160s; }
+.grid-mark svg { width: 100%; height: 100%; color: #2F5BD3; opacity: .11; filter: blur(3.4px); stroke-width: initial; image-rendering: high-quality; }
+:root[data-theme="dark"] .grid-mark svg { color: #9DBBFF; opacity: .12; }

@@ -1785,7 +1785,7 @@
     g.setZoom(S.zoom);
     // הלוגו מסתובב לאט מאחורי הטבלה, מעורפל
     const gh = g.host.querySelector('.grid-host');
-    if (gh && !gh.querySelector('.grid-mark')) gh.insertAdjacentHTML('afterbegin', `<div class="grid-mark" aria-hidden="true"><i>${fanSvg(560, true)}</i></div>`);
+    if (gh && !gh.querySelector('.grid-mark')) gh.insertAdjacentHTML('afterbegin', `<div class="grid-mark" aria-hidden="true"><i>${engineSvg()}</i></div>`);
     applyView(g);
     bindMore();
     const vb = $('#viewBtn'); if (vb) vb.onclick = () => viewDialog(g);
@@ -1876,6 +1876,32 @@
     root.addEventListener('mouseleave', () => { if (tipEl) tipEl.hidden = true; });
   }
   /** סמל המערכת: מאוורר מנוע בקו טכני */
+  /** לוגו מנוע (מבט קדמי) באיכות גבוהה — לרקע הטבלה */
+  function engineSvg() {
+    let blades = '';
+    for (let i = 0; i < 26; i++) {
+      const a = (i * 360) / 26;
+      blades += `<path d="M100 100 C 108 86, 118 66, 117 30 C 113 29, 109 29, 106 30 C 108 62, 103 84, 100 100 Z" transform="rotate(${a.toFixed(2)} 100 100)" fill="url(#gmBlade)"/>`;
+    }
+    let ticks = '';
+    for (let i = 0; i < 72; i++) ticks += `<line x1="100" y1="6.5" x2="100" y2="${i % 6 ? 9.5 : 12}" transform="rotate(${i * 5} 100 100)"/>`;
+    return `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision">
+      <defs>
+        <linearGradient id="gmBlade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".95"/><stop offset="1" stop-color="currentColor" stop-opacity=".35"/></linearGradient>
+        <radialGradient id="gmHub" cx=".4" cy=".35" r=".7"><stop offset="0" stop-color="#fff" stop-opacity=".9"/><stop offset=".35" stop-color="currentColor" stop-opacity=".9"/><stop offset="1" stop-color="currentColor"/></radialGradient>
+        <radialGradient id="gmGlow" cx=".5" cy=".5" r=".5"><stop offset=".6" stop-color="currentColor" stop-opacity="0"/><stop offset="1" stop-color="currentColor" stop-opacity=".35"/></radialGradient>
+      </defs>
+      <circle cx="100" cy="100" r="98" fill="url(#gmGlow)"/>
+      <circle cx="100" cy="100" r="96" fill="none" stroke="currentColor" stroke-width="3"/>
+      <circle cx="100" cy="100" r="90" fill="none" stroke="currentColor" stroke-width=".8" stroke-opacity=".7"/>
+      <g stroke="currentColor" stroke-width=".7" stroke-opacity=".75">${ticks}</g>
+      <circle cx="100" cy="100" r="72" fill="none" stroke="currentColor" stroke-width=".6" stroke-dasharray="1.5 3" stroke-opacity=".7"/>
+      ${blades}
+      <circle cx="100" cy="100" r="22" fill="url(#gmHub)"/>
+      <circle cx="100" cy="100" r="22" fill="none" stroke="currentColor" stroke-width="1.2"/>
+      <path d="M100 86 C 106 92, 106 108, 100 114 C 94 108, 94 92, 100 86 Z" fill="#fff" fill-opacity=".35" transform="rotate(35 100 100)"/>
+    </svg>`;
+  }
   function fanSvg(size, big) {
     const blades = big ? 22 : 12; let b = '';
     for (let i = 0; i < blades; i++) {
