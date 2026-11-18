@@ -368,7 +368,14 @@
   }
   /** משתמש ותיק בלי תפקיד — בוחר פעם אחת */
   function ensureRole() {
-    const u = Store.currentUser(); if (!u || u.role) return;
+    const u = Store.currentUser(); if (!u) return;
+    // עוד אין מנהל רכש במערכת — מי שנכנס (המשתמש הראשון בפועל) מקבל את התפקיד אוטומטית
+    if (!D.hasManager()) {
+      Store.updateUser(u.id, { role: 'manager' });
+      UI.toast('הוגדרת כמנהל רכש — אפשר לשנות תפקידים בתפריט "משתמשים ותפקידים".', 'ok', 6000);
+      return renderShell();
+    }
+    if (u.role) return;
     const users = Store.db.users.filter((x) => !x.deleted).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     const first = users[0] && users[0].id === u.id;
     const body = document.createElement('div');
@@ -382,6 +389,7 @@
       } }],
     });
     m.el.querySelector('[data-x]').remove();
+    m.el.classList.add('locked'); // אי אפשר לסגור בלי לבחור תפקיד
   }
 
   /** מכשיר מחובר שבו למשתמש עוד אין כניסה מכל מכשיר (למשל אחרי חיבור בקישור) — משלימים פעם אחת */

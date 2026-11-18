@@ -128,9 +128,9 @@
     }
     if (!actions.length) f.remove();
     back.querySelector('[data-x]').onclick = close;
-    back.addEventListener('mousedown', (e) => { if (e.target === back) close(); });
+    back.addEventListener('mousedown', (e) => { if (e.target === back && !back.classList.contains('locked')) close(); });
     const onKey = (e) => {
-      if (e.key === 'Escape') close();
+      if (e.key === 'Escape' && !back.classList.contains('locked')) close();
       if (e.key === 'Enter' && !e.shiftKey && e.target.tagName === 'INPUT') { const p = f.querySelector('.btn-primary'); if (p) { e.preventDefault(); p.click(); } }
     };
     document.addEventListener('keydown', onKey);
