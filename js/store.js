@@ -538,7 +538,7 @@
     },
     async setTeamCode(code) {
       if (!this.remoteReady) throw new Error('צריך קודם להפעיל סנכרון.');
-      if (code.length < 6) throw new Error('קוד הצוות צריך להכיל לפחות 6 תווים.');
+      if (code.length < 4) throw new Error('קוד הצוות צריך להכיל לפחות 4 תווים.');
       const team = await seal(state.cfg.token, code);
       await writeAccess((acc) => { acc.data = dataInfo(); acc.team = team; });
     },

@@ -320,7 +320,7 @@
       await Store.enableRemoteLogin(u, pw).catch(remoteErr);
     }
     const acc = await Store.fetchAccess(true).catch(() => null);
-    if (acc && !acc.team) teamCodeDialog(true);
+    if (acc && !acc.team) await Store.setTeamCode(D.TEAM_CODE).catch(remoteErr);
   }
   /* ---------- שדות תפקיד והתראות ---------- */
   const DAYS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
@@ -371,10 +371,10 @@
     if (S.pw) return ensureRemoteLogin();
     const has = await Store.hasRemoteLogin(u).catch(() => true);
     if (!has) await afterConnect().catch(remoteErr);
-    else { const acc = await Store.fetchAccess().catch(() => null); if (acc && !acc.team) teamCodeDialog(true); }
+    else { const acc = await Store.fetchAccess().catch(() => null); if (acc && !acc.team && u.role === 'manager') await Store.setTeamCode(D.TEAM_CODE).catch(remoteErr); }
   }
   async function teamCodeDialog(first) {
-    const code = await UI.prompt('קוד צוות', `${first ? 'הגדר קוד צוות: עורכים חדשים יזינו אותו פעם אחת בהרשמה ממכשיר חדש. ' : ''}לפחות 6 תווים. מי שכבר רשום לא צריך אותו.`, '', 'שמירת קוד');
+    const code = await UI.prompt('קוד צוות', `קוד הצוות הנוכחי הוא ${D.TEAM_CODE} כברירת מחדל. עורכים חדשים מזינים אותו פעם אחת בהרשמה ממכשיר חדש. לפחות 4 תווים.`, '', 'שמירת קוד');
     if (!code) return;
     try { await Store.setTeamCode(code); UI.toast('קוד הצוות נשמר. שתף אותו רק עם עורכים מורשים.', 'ok', 5000); }
     catch (e) { UI.toast(e.message, 'error', 7000); }
@@ -517,7 +517,7 @@
       mgr ? { title: 'ניהול' } : null,
       mgr ? { label: 'משתמשים ותפקידים…', icon: 'user', action: usersDialog } : { label: 'עורכים רשומים', icon: 'user', action: usersDialog },
       mgr ? { label: 'הרשאות עריכה לפי תפקיד…', icon: 'lock', action: permsDialog } : null,
-      mgr && gh ? { label: 'קוד צוות להרשמת עורכים…', icon: 'lock', action: () => teamCodeDialog(false) } : null,
+      mgr && gh ? { label: 'שינוי קוד צוות…', icon: 'lock', action: () => teamCodeDialog(false) } : null,
       mgr && gh ? { label: 'קישור חיבור למכשיר נוסף', icon: 'link', action: shareLink } : null,
       mgr ? { label: 'הגדרות סנכרון', icon: 'cloud', action: () => renderSetup() } : null,
       mgr ? { label: 'גיבוי נתונים (JSON)', icon: 'download', action: () => download(new Blob([Store.exportJson()], { type: 'application/json' }), `procurement-backup-${D.today()}.json`) } : null,
