@@ -980,3 +980,10 @@ h1, h2, .kpi-n, .hero-txt h2 { letter-spacing: -.015em; }
 .gate-form { overflow-y: auto; align-items: start; padding: 40px 32px; }
 .gate-form .form-card { margin: auto 0; }
 .gate-theme { z-index: 3; position: fixed; top: 16px; left: 16px; }
+.btn.danger-ghost { color: #B23D0E; }
+.btn.danger-ghost:hover:not(:disabled) { background: rgba(210, 85, 28, .1); color: #8C2F08; }
+:root[data-theme="dark"] .btn.danger-ghost { color: var(--late); }
+.danger-box { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: rgba(210, 85, 28, .1); border: 1px solid rgba(210, 85, 28, .3); color: #8C2F08; margin-bottom: 12px; }
+.danger-box b { display: block; font-size: 15px; }
+.danger-box span { font-size: 13px; }
+:root[data-theme="dark"] .danger-box { color: #FFB48E; }

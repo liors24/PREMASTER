@@ -708,6 +708,7 @@
           <button class="icon-btn" id="redo" title="חזרה (Ctrl+Y)" aria-label="חזרה">${icon('redo', 17)}</button>
           <button class="icon-btn" id="bulk" title="הזנת ערך לכל המסומנים (Ctrl+Enter)" aria-label="הזנה מרובה">${icon('wand', 17)}</button>
           <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקה">${icon('trash', 17)}</button>
+          <button class="btn btn-ghost danger-ghost" id="clearTbl" title="מחיקת כל השורות בטבלה">${icon('trash', 16)}<span>מחיקת הטבלה</span></button>
         </div>
         <div class="tb-group">
           <button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button>
@@ -747,7 +748,8 @@
         ? `<div><b>אין עדיין הזמנות בפרויקט ${esc(p.name)}</b><p>${m.project ? `שורות שבעמודת "${esc(colName(m.project))}" כתוב בהן "${esc(p.name)}" יופיעו כאן אוטומטית. אפשר גם להוסיף שורה חדשה.` : 'עוד לא הוגדרה עמודת פרויקט. פתח "עמודות" וסמן איזו עמודה מציינת את הפרויקט.'}</p></div>`
         : '<div><b>אין הזמנות</b><p>הוסף שורה או ייבא קובץ אקסל.</p></div>',
     });
-    applyCaps({ addRow: 'add', imp: 'import', del: 'del', colsBtn: 'admin', statusBtn: 'admin' });
+    applyCaps({ addRow: 'add', imp: 'import', del: 'del', clearTbl: 'admin', colsBtn: 'admin', statusBtn: 'admin' });
+    $('#clearTbl').onclick = () => clearTableDialog('orders', p);
     S.quickProject = p;
     renderQuick();
     S.grid = g;
@@ -1384,6 +1386,7 @@
           <button class="icon-btn" id="redo" title="חזרה (Ctrl+Y)" aria-label="חזרה">${icon('redo', 17)}</button>
           <button class="icon-btn" id="bulk" title="הזנת ערך לכל המסומנים (Ctrl+Enter)" aria-label="הזנה מרובה">${icon('wand', 17)}</button>
           <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקה">${icon('trash', 17)}</button>
+          <button class="btn btn-ghost danger-ghost" id="clearTbl" title="מחיקת כל השורות בטבלה">${icon('trash', 16)}<span>מחיקת הטבלה</span></button>
         </div>
         <div class="tb-group"><button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button></div>
         <div class="chips" id="chips"><span class="muted sm-note">המצב של כל מק"ט מחושב מהזמנות הפרויקט שלו</span></div>
@@ -1416,7 +1419,8 @@
       columnMenuExtra: (col) => [{ label: 'תפקיד העמודה…', icon: 'link', action: () => columnsDialog(col.id, 'bom') }],
       emptyHtml: `<div><b>אין עדיין BOM${p ? ' ל-' + esc(p.name) : ''}</b><p>ייבא את קובץ ה-BOM בכפתור "ייבוא BOM" או בגרירה לחלון. כל שורה צריכה מכלול, מק"ט וכמות${p ? '' : ', ועמודת פרויקט (או שתבחר פרויקט בייבוא)'}.</p></div>`,
     });
-    applyCaps({ addRow: 'bom', imp: 'import', del: 'bom', bulk: 'bom', colsBtn: 'admin' });
+    applyCaps({ addRow: 'bom', imp: 'import', del: 'bom', bulk: 'bom', clearTbl: 'admin', colsBtn: 'admin' });
+    $('#clearTbl').onclick = () => clearTableDialog('bom', p);
     S.grid = g;
     $('#q').addEventListener('input', debounce((e) => g.setSearch(e.target.value), 180));
     $('#addRow').onclick = () => { g.appendRows(1); g.focus(); };
@@ -1603,6 +1607,49 @@
       <div class="pc-del"><span>אספקות</span><div class="hm-bar"><i style="--w:${delivery * 100}%"></i></div><b>${pct(delivery)}</b></div>
       ${worst.length ? `<div class="pc-asm"><span class="pc-asm-t">מכלולים שהכי רחוקים מהשלמה</span>${worst.map((a) => `<div class="pc-a"><span>${esc(a.name)}</span><div class="pbar"><div style="width:${pct(a.pct)}"></div></div><b>${pct(a.pct)}</b></div>`).join('')}</div>` : '<div class="pc-asm muted">עוד אין BOM לפרויקט</div>'}
     </button>`;
+  }
+
+  /* ================= מחיקת טבלה ================= */
+  function clearTableDialog(ds, p) {
+    const isBom = ds === 'bom';
+    const rows = p ? (isBom ? D.bomLines(p) : D.projectRows(p)) : Store.rows(ds);
+    const what = `${isBom ? 'טבלת ה-BOM' : 'טבלת ההזמנות'}${p ? ' של ' + p.name : ''}`;
+    if (!rows.length) return UI.toast(`${what} כבר ריקה.`, 'info');
+    const word = 'מחיקה';
+    const body = document.createElement('div');
+    body.innerHTML = `<div class="danger-box">${icon('alert', 20)}<div><b>${fmtN(rows.length)} שורות יימחקו מ${what}</b><span>המחיקה תעבור לכל המשתמשים ולכל המכשירים.</span></div></div>
+      <label class="chk"><input type="checkbox" data-backup checked><span>להוריד קובץ אקסל עם כל השורות לפני המחיקה</span></label>
+      ${!p ? `<label class="chk"><input type="checkbox" data-cols><span>למחוק גם את העמודות${isBom ? ' הנוספות' : ''} (כדי לייבא קובץ במבנה אחר)</span></label>` : ''}
+      <label class="field"><span>כדי לאשר, הקלד <b>${word}</b></span><input type="text" data-confirm autocomplete="off"></label>`;
+    UI.modal({
+      title: `מחיקת ${what}`, body,
+      actions: [{ label: 'ביטול' }, { label: 'מחיקת הטבלה', danger: true, icon: 'trash', action: async () => {
+        if (body.querySelector('[data-confirm]').value.trim() !== word) throw new Error(`כדי לאשר צריך להקליד "${word}".`);
+        if (body.querySelector('[data-backup]').checked) {
+          const cols = Store.columns(ds);
+          const blob = XlsxLite.writeXlsx([{ name: isBom ? 'BOM' : 'הזמנות', header: cols.map((c) => c.name), rows: rows.map((r) => cols.map((c) => { const v = r.c[c.id]; return c.type === 'date' ? Grid.util.fmtDate(String(v ?? '')) : v ?? ''; })), widths: cols.map((c) => c.width) }]);
+          download(blob, `גיבוי ${what} ${D.today()}.xlsx`);
+        }
+        // לשוניות שלא יישאר להן כלום (לא הזמנות ולא BOM) יורדות
+        if (!p) for (const pr of Store.projects()) {
+          const other = isBom ? D.projectRows(pr).length : D.bomLines(pr).length;
+          if (!other) { pr.deleted = true; Store.touch(pr); }
+        }
+        for (const r of rows) { r.deleted = true; Store.touch(r); }
+        const dropCols = !p && body.querySelector('[data-cols]')?.checked;
+        if (dropCols) {
+          const keep = isBom ? new Set(Object.values(D.bomMapping())) : new Set();
+          for (const c of Store.db.datasets[ds].columns) if (!c.deleted && !keep.has(c.id)) { c.deleted = true; Store.touch(c); }
+          if (!isBom) { Store.db.settings.mapping = {}; Store.db.settings.updatedAt = Store.now(); }
+        }
+        Store.commit();
+        S.catFilter = null;
+        D.syncProjects();
+        await Store.flush();
+        renderTabs(); renderMain();
+        UI.toast(`${what} נמחקה (${fmtN(rows.length)} שורות)${dropCols ? ', כולל העמודות' : ''}.`, 'ok', 5000);
+      } }],
+    });
   }
 
   /* ================= עזרים ================= */
