@@ -119,13 +119,30 @@
     { name: 'FX', re: /(^|[^a-z])fx([^a-z]|$)/i },
     { name: 'S9', re: /(^|[^a-z0-9])s[\s\-_]?9([^0-9]|$)/i },
   ];
-  const pk = (v) => { const s = norm(v); if (!s) return s; const c = D.CORE_PROJECTS.find((x) => x.re.test(s)); return c ? norm(c.name) : s; };
+  const pkMemo = new Map();
+  const pk = (v) => {
+    const raw = v == null ? '' : String(v); let r = pkMemo.get(raw); if (r !== undefined) return r;
+    const s = norm(raw); const c = s && D.CORE_PROJECTS.find((x) => x.re.test(s)); r = c ? norm(c.name) : s;
+    if (pkMemo.size > 5000) pkMemo.clear(); pkMemo.set(raw, r); return r;
+  };
   D.pk = pk;
   D.isCore = (p) => D.CORE_PROJECTS.some((c) => norm(c.name) === norm(p.name));
   const normPart = (s) => String(s ?? '').trim().toUpperCase().replace(/[\s\-_.]/g, '');
   D.norm = norm; D.normPart = normPart;
 
   D.mapping = () => Store.db.settings.mapping || {};
+  const numOf = (v) => { if (v === '' || v == null) return null; const n = parseFloat(String(v).replace(/[,\s]/g, '')); return Number.isFinite(n) ? n : null; };
+  D.numOf = numOf;
+  /** מצב האספקה של שורה: full / part / none / over (או null אם אין כמות נדרשת) */
+  D.supplyState = (row) => {
+    const m = D.mapping(); if (!m.qtySupplied) return null;
+    const s = numOf(row.c[m.qtySupplied]) || 0, q = m.qty ? numOf(row.c[m.qty]) : null;
+    if (s <= 0) return 'none';
+    if (q == null || q <= 0) return null;
+    return s === q ? 'full' : s < q ? 'part' : 'over';
+  };
+  /** מי יכול לפתוח לשונית פרויקט: מנהל רכש וקדמים */
+  D.canTabs = () => { const u = D.me(); return D.can('admin') || !!(u && u.role === 'expediter'); };
   /** עמודה שרוב הערכים בה מספריים (למשל קוד/מספר ספק) */
   D.looksNumeric = (col) => {
     const rows = Store.rows('orders'); let n = 0, num = 0;
@@ -164,12 +181,17 @@
     if (/עיכוב|מעוכב|באיחור|איחור|delay|late|חריג|תקוע|בעי|hold|חסום|דחוף/.test(s)) return 'delayed';
     return 'open';
   };
+  // ערכי סטטוס חוזרים על עצמם — מחשבים פעם אחת לכל ערך (המטמון מתאפס כשמיפוי הסטטוסים משתנה)
+  let catMemo = new Map(), catMapRef = null; const NO_MAP = {};
   D.catOfValue = (v) => {
-    const map = Store.db.settings.statusMap || {};
-    const k = norm(v);
-    return map[k] || D.autoCat(v);
+    const map = Store.db.settings.statusMap || NO_MAP;
+    if (map !== catMapRef) { catMapRef = map; catMemo = new Map(); }
+    const raw = v == null ? '' : String(v); let r = catMemo.get(raw);
+    if (r === undefined) { r = map[norm(raw)] || D.autoCat(raw); if (catMemo.size > 5000) catMemo.clear(); catMemo.set(raw, r); }
+    return r;
   };
-  D.today = () => new Date().toISOString().slice(0, 10);
+  let _today = '', _todayAt = 0;
+  D.today = () => { const t = Date.now(); if (t - _todayAt > 60000) { _today = new Date().toISOString().slice(0, 10); _todayAt = t; } return _today; };
   D.isOverdue = (row) => {
     const m = D.mapping();
     if (!m.due) return false;
@@ -195,7 +217,7 @@
   D.addProject = (name) => {
     name = name.trim();
     if (!name) throw new Error('צריך לתת שם לפרויקט.');
-    if (Store.projects().some((p) => norm(p.name) === norm(name))) throw new Error('כבר קיים פרויקט בשם הזה.');
+    if (Store.projects().some((p) => pk(p.name) === pk(name))) throw new Error('כבר קיימת לשונית לפרויקט הזה.');
     const list = Store.projects();
     const p = { id: Store.uid(), name, order: list.length, color: D.PROJECT_COLORS[list.length % D.PROJECT_COLORS.length], createdAt: Store.now(), updatedAt: Store.now() };
     Store.db.projects.push(p);
@@ -208,25 +230,20 @@
    * פרויקט שכבר אין לו שורות → הלשונית יורדת (וחוזרת אוטומטית אם השם יופיע שוב).
    */
   let membership = new Map(); // rowId -> projectId (בזיכרון בלבד)
+  /** לשוניות: שלוש מרכזיות קבועות + לשוניות שנפתחו ידנית. אין יותר יצירה אוטומטית מתוך עמודת הפרויקט */
   D.syncProjects = () => {
     const m = D.mapping();
     const rows = Store.rows('orders');
-    const names = new Map(); // norm -> כתיב תצוגה
-    for (const r of rows) { const v = String(r.c[m.project] ?? '').trim(); if (v && !names.has(pk(v))) names.set(pk(v), v); }
-    for (const c of D.CORE_PROJECTS) if (names.has(pk(c.name))) names.set(pk(c.name), c.name);
-    const bpc = D.bomMapping().project;
     const all = Store.db.projects;
     let changed = false; const created = [];
-    // שלוש הלשוניות המרכזיות קיימות תמיד, ראשונות בסדר
     D.CORE_PROJECTS.forEach((c, i) => {
       let p = all.find((x) => !x.deleted && pk(x.name) === pk(c.name)) || all.find((x) => pk(x.name) === pk(c.name));
       if (!p) { p = { id: 'core-' + c.name.toLowerCase(), name: c.name, order: i - 100, color: D.PROJECT_COLORS[i % D.PROJECT_COLORS.length], createdAt: 1, updatedAt: Store.now(), core: true }; all.push(p); changed = true; }
       else if (p.deleted || !p.core || p.order !== i - 100 || p.name !== c.name) { p.deleted = false; p.core = true; p.order = i - 100; p.name = c.name; Store.touch(p); changed = true; }
     });
-    if (!m.project) { if (changed) Store.commit(); return { changed, created }; }
-    // כפילויות שנוצרו במקביל בשני מכשירים: משאירים את הוותיקה
+    // כפילויות (שני מכשירים במקביל, או שם שמנותב ללשונית מרכזית): משאירים אחת
     const seen = new Map();
-    for (const p of all.filter((x) => !x.deleted).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || (a.id < b.id ? -1 : 1))) {
+    for (const p of all.filter((x) => !x.deleted).sort((a, b) => (b.core ? 1 : 0) - (a.core ? 1 : 0) || (a.createdAt || 0) - (b.createdAt || 0) || (a.id < b.id ? -1 : 1))) {
       const k = pk(p.name);
       if (seen.has(k)) {
         const keep = seen.get(k);
@@ -234,49 +251,11 @@
         p.deleted = true; Store.touch(p); changed = true;
       } else seen.set(k, p);
     }
-    const active = all.filter((x) => !x.deleted);
-    const byNorm = new Map(active.map((x) => [pk(x.name), x]));
-    let missing = active.filter((x) => !x.core && !names.has(pk(x.name)) && (x.hadRows || x.auto));
-    for (const [k, display] of names) {
-      if (byNorm.has(k)) { const p = byNorm.get(k); if (!p.hadRows) { p.hadRows = true; Store.touch(p); changed = true; } continue; }
-      // שינוי שם: רוב השורות עם השם החדש היו שייכות לפרויקט שנעלם
-      const votes = new Map();
-      for (const r of rows) {
-        if (pk(r.c[m.project]) !== k) continue;
-        const pid = membership.get(r.id);
-        if (pid && missing.some((x) => x.id === pid)) votes.set(pid, (votes.get(pid) || 0) + 1);
-      }
-      let target = null;
-      if (votes.size) { const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0]; target = missing.find((x) => x.id === best); }
-      if (!target) { target = all.find((x) => x.deleted && pk(x.name) === k) || null; if (target) target.deleted = false; }
-      if (target) {
-        // הפרויקט שינה שם בטבלת ההזמנות — גם שורות ה-BOM שלו עוברות לשם החדש
-        if (pk(target.name) !== k) for (const b of Store.rows('bom')) if (pk(b.c[bpc]) === pk(target.name)) { b.c[bpc] = display; Store.touch(b); }
-        target.name = display; target.hadRows = true; Store.touch(target);
-        missing = missing.filter((x) => x !== target); byNorm.set(k, target); changed = true;
-      } else {
-        const list = Store.projects();
-        const np = { id: Store.uid(), name: display, order: list.length, color: D.PROJECT_COLORS[list.length % D.PROJECT_COLORS.length], createdAt: Store.now(), updatedAt: Store.now(), auto: true, hadRows: true };
-        all.push(np); byNorm.set(k, np); created.push(np); changed = true;
-      }
-    }
-    // פרויקטים שמופיעים רק ב-BOM מקבלים גם הם לשונית
-    const bomNames = new Map();
-    for (const r of Store.rows('bom')) { const v = String(r.c[bpc] ?? '').trim(); if (v && !bomNames.has(pk(v))) bomNames.set(pk(v), v); }
-    for (const [k, display] of bomNames) {
-      if (byNorm.has(k)) { missing = missing.filter((x) => pk(x.name) !== k); continue; }
-      let t = all.find((x) => x.deleted && pk(x.name) === k);
-      if (t) { t.deleted = false; Store.touch(t); }
-      else {
-        const list = Store.projects();
-        t = { id: Store.uid(), name: display, order: list.length, color: D.PROJECT_COLORS[list.length % D.PROJECT_COLORS.length], createdAt: Store.now(), updatedAt: Store.now(), auto: true, hadRows: true };
-        all.push(t); created.push(t);
-      }
-      byNorm.set(k, t); changed = true;
-    }
-    for (const p of missing) { p.deleted = true; Store.touch(p); changed = true; }
+    // לשוניות שנוצרו אוטומטית בעבר יורדות; נשארות רק המרכזיות ומה שנפתח ידנית
+    for (const p of all) if (!p.deleted && !p.core && p.auto) { p.deleted = true; Store.touch(p); changed = true; }
+    const byNorm = new Map(all.filter((x) => !x.deleted).map((x) => [pk(x.name), x]));
     membership = new Map();
-    for (const r of rows) { const p = byNorm.get(pk(r.c[m.project])); if (p) membership.set(r.id, p.id); }
+    if (m.project) for (const r of rows) { const p = byNorm.get(pk(r.c[m.project])); if (p) membership.set(r.id, p.id); }
     if (changed) Store.commit();
     return { changed, created };
   };

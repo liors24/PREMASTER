@@ -10,6 +10,8 @@
   const LS_DB = 'pt.db.v1';
   const LS_CFG = 'pt.cfg.v1';
   const LS_SESSION = 'pt.session.v1';
+  let _sess;
+  addEventListener('storage', (e) => { if (e.key === LS_SESSION) _sess = undefined; });
   const TOMBSTONE_TTL = 1000 * 60 * 60 * 24 * 60; // 60 ימים
 
   const now = () => Date.now();
@@ -482,7 +484,8 @@
     touch(rec) { rec.updatedAt = now(); rec.by = sessionUser(); return rec; },
 
     /* ---------- משתמשים ---------- */
-    get session() { try { return JSON.parse(sessionStorage.getItem(LS_SESSION) || localStorage.getItem(LS_SESSION)); } catch { return null; } },
+    // נקרא בכל ציור תא (הרשאות) — שומרים במטמון במקום לקרוא מהאחסון כל פעם
+    get session() { if (_sess === undefined) { try { _sess = JSON.parse(sessionStorage.getItem(LS_SESSION) || localStorage.getItem(LS_SESSION)); } catch { _sess = null; } } return _sess; },
     currentUser() { const s = this.session; return s && state.db.users.find((u) => u.id === s.userId && !u.deleted); },
     userName(id) { const u = state.db.users.find((x) => x.id === id); return u ? `${u.first} ${u.last}` : ''; },
     register(first, last, pw, extra = {}) {
@@ -504,7 +507,7 @@
       if (hashPassword(pw, u.salt) !== u.hash) throw new Error('הסיסמה שגויה.');
       _suAt = 0;
       const s = JSON.stringify({ userId: u.id, at: now() });
-      sessionStorage.setItem(LS_SESSION, s);
+      sessionStorage.setItem(LS_SESSION, s); _sess = undefined;
       if (remember) localStorage.setItem(LS_SESSION, s); else localStorage.removeItem(LS_SESSION);
       return u;
     },
@@ -515,7 +518,7 @@
     /** אחסון מקומי קטן (העדפות התראה, תאריך התראה אחרונה) — משותף גם ל-Service Worker */
     async kvGet(k) { try { return await IDB.get(k); } catch { return null; } },
     async kvSet(k, v) { try { await IDB.set(k, v); } catch { } },
-    logout() { _suAt = 0; sessionStorage.removeItem(LS_SESSION); localStorage.removeItem(LS_SESSION); sessionStorage.removeItem('pt.unlocked'); },
+    logout() { _suAt = 0; _sess = undefined; sessionStorage.removeItem(LS_SESSION); localStorage.removeItem(LS_SESSION); sessionStorage.removeItem('pt.unlocked'); },
 
     /* ---------- כניסה מכל מכשיר ---------- */
     siteRepo,

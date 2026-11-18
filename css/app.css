@@ -1143,3 +1143,46 @@ h1, h2, .kpi-n, .hero-txt h2 { letter-spacing: -.015em; }
 .more-tools.closing .mt-i { animation: toolOut .2s ease-in both; }
 @keyframes toolPop { 0% { opacity: 0; transform: translateX(18px) scale(.7) rotate(-4deg); } 60% { opacity: 1; } 100% { opacity: 1; transform: none; } }
 @keyframes toolOut { to { opacity: 0; transform: translateX(14px) scale(.85); } }
+
+/* =========================================================
+   צביעת "כמות שהתקבלה" לפי הכמות הנדרשת — גוונים עדינים
+   ========================================================= */
+.gc.qs { font-weight: 600; }
+.gc.qs-full { background: rgba(30, 142, 90, .12) !important; color: #17734A; }
+.gc.qs-part { background: rgba(232, 146, 52, .14) !important; color: #A2591A; }
+.gc.qs-none, .gc.qs-over { background: rgba(214, 64, 52, .11) !important; color: #B3352B; }
+.gr.odd .gc.qs-full { background: rgba(30, 142, 90, .15) !important; }
+.gr.odd .gc.qs-part { background: rgba(232, 146, 52, .17) !important; }
+.gr.odd .gc.qs-none, .gr.odd .gc.qs-over { background: rgba(214, 64, 52, .14) !important; }
+:root[data-theme="dark"] .gc.qs-full { background: rgba(39, 168, 110, .18) !important; color: #7FD8AE; }
+:root[data-theme="dark"] .gc.qs-part { background: rgba(240, 160, 70, .18) !important; color: #F4C48E; }
+:root[data-theme="dark"] .gc.qs-none, :root[data-theme="dark"] .gc.qs-over { background: rgba(230, 90, 75, .17) !important; color: #F5A39A; }
+
+/* =========================================================
+   ביצועים: גלילה חלקה בטבלאות גדולות
+   ========================================================= */
+.gc, .rh, .gh { transition: none !important; }
+.grid-rows { will-change: transform; contain: layout style; }
+.grid-scroll { overscroll-behavior: contain; }
+body.is-scrolling .bg-orbs i { animation-play-state: paused !important; }
+body.is-scrolling .gr:hover .gc, body.is-scrolling .gr:hover .rh { background: inherit; }
+/* רקע דינמי בלי filter:blur (יקר מאוד לציור) — אותו מראה רך עם מעבר רדיאלי */
+.bg-orbs { contain: strict; }
+.bg-orbs i { filter: none !important; background: radial-gradient(circle at center, var(--oc) 0%, color-mix(in srgb, var(--oc) 55%, transparent) 30%, transparent 68%) !important; transform: translateZ(0); }
+.bg-orbs i:nth-child(1) { --oc: #8DB0FF; }
+.bg-orbs i:nth-child(2) { --oc: #9FE3C4; }
+.bg-orbs i:nth-child(3) { --oc: #D3B8FF; }
+.bg-orbs i:nth-child(4) { --oc: #FFD3B0; }
+:root[data-theme="dark"] .bg-orbs i:nth-child(1) { --oc: #4A78F0; }
+:root[data-theme="dark"] .bg-orbs i:nth-child(2) { --oc: #2BB37A; }
+:root[data-theme="dark"] .bg-orbs i:nth-child(3) { --oc: #9A6FD6; }
+:root[data-theme="dark"] .bg-orbs i:nth-child(4) { --oc: #E0689A; }
+.bg-orbs i { width: 62vmax !important; height: 62vmax !important; }
+.bg-orbs i:nth-child(4) { width: 44vmax !important; height: 44vmax !important; }
+@media (prefers-reduced-motion: reduce) { .bg-orbs i { animation: none !important; } }
+/* הטבלה: חצי-שקופה בלי טשטוש רקע — הטשטוש על משטח גדול שנגלל הוא הגורם העיקרי לאיטיות */
+.grid-host { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; background: rgba(255, 255, 255, .8) !important; }
+:root[data-theme="dark"] .grid-host { background: rgba(34, 52, 82, .74) !important; }
+/* כל שורה מבודדת — שינוי בתא לא מחשב מחדש את כל הטבלה */
+.gr { contain: layout style; }
+.gc { contain: layout style paint; }

@@ -8,7 +8,8 @@
   const $ = (s, el = document) => el.querySelector(s);
   const app = document.getElementById('app');
   const DENSITY = { compact: 30, normal: 36, comfy: 46 };
-  const fmtN = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const NUMF = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+  const fmtN = (n) => NUMF.format(Number(n || 0));
   const pct = (x) => Math.round(x * 100) + '%';
 
   const S = {
@@ -479,7 +480,7 @@
       if (!FIXED.includes(b.dataset.tab)) b.addEventListener('contextmenu', (e) => { e.preventDefault(); projectMenu(b.dataset.tab, e.clientX, e.clientY); });
     });
     $('#addProject').addEventListener('click', addProjectFlow);
-    if (!D.can('admin')) $('#addProject').hidden = true;
+    if (!D.canTabs()) $('#addProject').hidden = true;
     setTimeout(() => S.newTabs.clear(), 1200);
     const on = el.querySelector('.tab.on'); on && on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
@@ -497,7 +498,7 @@
     } catch (e) { UI.toast(e.message, 'error'); }
   }
   function projectMenu(pid, x, y) {
-    if (!D.can('admin')) return;
+    if (!D.canTabs()) return;
     const p = Store.projects().find((q) => q.id === pid); if (!p) return;
     if (D.isCore(p)) return UI.menu(x, y, [
       { title: p.name + ' · לשונית מרכזית' },
@@ -510,7 +511,7 @@
       { label: 'הזזה ימינה', icon: 'chevron', action: () => moveProject(p, -1) },
       { label: 'הזזה שמאלה', icon: 'chevron', action: () => moveProject(p, 1) },
       { sep: true },
-      { label: D.projectRows(p).length ? 'הלשונית יורדת לבד כשאין לה הזמנות' : 'הסרת הלשונית', icon: 'trash', danger: true, disabled: D.projectRows(p).length > 0, action: () => { p.deleted = true; Store.touch(p); Store.commit(); go('home'); } },
+      { label: 'הסרת הלשונית', icon: 'trash', danger: true, action: async () => { if (!(await UI.confirm('הסרת הלשונית', `הלשונית "${p.name}" תוסר. ההזמנות עצמן נשארות בטבלה הראשית.`, 'הסרה', true))) return; p.deleted = true; Store.touch(p); Store.commit(); go('home'); } },
     ]);
   }
   function moveProject(p, d) {
@@ -816,6 +817,7 @@
       const m = D.mapping();
       if (col.id === m.status) { const c = D.cat(row); return { cls: 'has-chip', html: txt ? `<span class="chip c-${c}">${esc(txt)}</span>` : (c === 'delayed' ? `<span class="chip c-delayed">באיחור</span>` : '') }; }
       if (col.id === m.due && D.isOverdue(row)) return { cls: 'overdue' };
+      if (col.id === m.qtySupplied) { const st = D.supplyState(row); return { cls: st ? 'qs qs-' + st : '', html: txt === '' ? '0' : null }; }
       if (!p && col.id === m.project && txt) { const pc = D.projectColor(txt); if (pc) return { html: `<span class="ptag" style="--pc:${pc}"><i class="pdot"></i>${esc(txt)}</span>` }; }
       return null;
     };
@@ -1749,7 +1751,12 @@
     loadFont(v.font);
     const host = g && g.host.querySelector('.grid-host');
     if (host) { host.style.setProperty('--cell-font', v.size + 'px'); host.style.setProperty('--cell-family', `"${v.font}", "Rubik", system-ui, sans-serif`); host.dataset.align = v.align; }
-    if (g) { g.hCache.clear(); (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { g.hCache.clear(); g.refresh(true); }); g.refresh(true); }
+    if (!g) return;
+    const sig = v.font + v.size + v.align;
+    const changed = applyView.sig !== undefined && applyView.sig !== sig; applyView.sig = sig;
+    if (changed) { g.hCache.clear(); g.refresh(true); }
+    // גופן שעוד לא נטען: מחשבים גבהים מחדש פעם אחת אחרי שהוא מגיע
+    if (document.fonts && !document.fonts.check(`14px "${v.font}"`)) document.fonts.load(`14px "${v.font}"`).then(() => { if (S.grid === g || g.host.isConnected) { g.hCache.clear(); g.refresh(true); } }).catch(() => {});
   }
   function viewDialog(g) {
     const v = S.view;

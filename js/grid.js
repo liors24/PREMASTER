@@ -31,10 +31,12 @@
     if (col.type === 'date') return parseDate(s);
     return s;
   }
+  const H_CACHE = new Map();
+  const NUMF = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
   function display(col, v) {
     if (v == null || v === '') return '';
     if (col.type === 'date') return fmtDate(String(v));
-    if (col.type === 'number' && typeof v === 'number') return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    if (col.type === 'number' && typeof v === 'number') return Number.isInteger(v) && Math.abs(v) < 1000 ? String(v) : NUMF.format(v);
     return String(v);
   }
   function editText(col, v) {
@@ -76,7 +78,8 @@
       this._raf = 0;
       this.flashIds = new Set();
       this.z = 1;
-      this.hCache = new Map();
+      // מטמון גבהים משותף לכל הטבלאות (מפתח כולל רוחב עמודות, גופן וזמן עדכון) — פתיחה חוזרת של לשונית מיידית
+      this.hCache = H_CACHE;
       this.ver = new Map();
       this.build();
       this.refresh();
@@ -97,7 +100,12 @@
       this.selEl = this.host.querySelector('.grid-sel');
       this.emptyEl = this.host.querySelector('.grid-empty');
 
-      this.scroll.addEventListener('scroll', () => this.queueRender(), { passive: true });
+      this.scroll.addEventListener('scroll', () => {
+        this.queueRender(true);
+        // בזמן גלילה מקפיאים אנימציות רקע כבדות (טשטוש זכוכית) כדי שהגלילה תהיה חלקה
+        document.body.classList.add('is-scrolling');
+        clearTimeout(this._st); this._st = setTimeout(() => document.body.classList.remove('is-scrolling'), 160);
+      }, { passive: true });
       this.scroll.addEventListener('mousedown', (e) => this.onMouseDown(e));
       this.scroll.addEventListener('dblclick', (e) => this.onDblClick(e));
       this.scroll.addEventListener('contextmenu', (e) => this.onContext(e));
@@ -131,7 +139,7 @@
     autoH(row, base) {
       const f = this.o.cellFont ? this.o.cellFont() : { font: 'Rubik', size: 14 };
       const key = row.updatedAt + '|' + this.colSig + '|' + base + '|' + f.font + f.size;
-      const hit = this.hCache.get(row.id);
+      const hit = this.hCache.get(this.ds + row.id);
       if (hit && hit.k === key) return hit.h;
       const ctx = (this._ctx ||= document.createElement('canvas').getContext('2d'));
       ctx.font = `400 ${f.size}px "${f.font}", "Rubik", system-ui, sans-serif`;
@@ -151,7 +159,7 @@
         if (lines >= 8) { lines = 8; break; }
       }
       const h = lines === 1 ? Math.max(base, lh + 14) : Math.max(base, lines * lh + 14);
-      this.hCache.set(row.id, { k: key, h });
+      this.hCache.set(this.ds + row.id, { k: key, h });
       return h;
     }
     /** זום לטבלה בלבד (לא לכל האתר) */
@@ -251,9 +259,10 @@
     }
 
     /* ================= רינדור ================= */
-    queueRender() {
+    queueRender(fromScroll) {
+      if (!fromScroll) this._dirty = true;
       if (this._raf) return;
-      this._raf = requestAnimationFrame(() => { this._raf = 0; this.renderRows(); });
+      this._raf = requestAnimationFrame(() => { this._raf = 0; const f = this._dirty; this._dirty = false; this.renderRows(!f); });
     }
     renderHead() {
       const selCols = this.selectedColSet();
@@ -280,10 +289,16 @@
       while (lo < hi) { const mid = (lo + hi) >> 1; if (t[mid + 1] <= st) lo = mid + 1; else hi = mid; }
       let end = lo;
       while (end < this.view.length && t[end] < st + h) end++;
-      return [Math.max(0, lo - 6), Math.min(this.view.length, end + 6)];
+      return [lo, end];
     }
-    renderRows() {
-      const [a, b] = this.visibleRange();
+    renderRows(onlyIfNeeded) {
+      const [va, vb] = this.visibleRange();
+      // גלילה בתוך החלון שכבר מצויר — אין צורך לצייר מחדש
+      const R = this._rng;
+      if (onlyIfNeeded && R && R.view === this.view && R.w === this.totalW && va >= R.a && vb <= R.b) return;
+      const OV = 14;
+      const a = Math.max(0, va - OV), b = Math.min(this.view.length, vb + OV);
+      this._rng = { a, b, view: this.view, w: this.totalW };
       const selRows = this.selectedRowFull();
       const touched = this.selectedRowAny();
       const decorate = this.o.decorate;
