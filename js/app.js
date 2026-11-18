@@ -502,6 +502,7 @@
     const p = Store.projects().find((q) => q.id === pid); if (!p) return;
     if (D.isCore(p)) return UI.menu(x, y, [
       { title: p.name + ' · לשונית מרכזית' },
+      { label: 'שינוי שם…', icon: 'edit', action: () => renameProject(p) },
       { label: 'החלפת צבע', icon: 'layers', action: () => { const i = D.PROJECT_COLORS.indexOf(p.color); p.color = D.PROJECT_COLORS[(i + 1) % D.PROJECT_COLORS.length]; Store.touch(p); Store.commit(); renderTabs(); } },
     ]);
     UI.menu(x, y, [
@@ -522,9 +523,9 @@
     Store.commit(); renderTabs();
   }
   async function renameProject(p) {
-    const name = await UI.prompt('שינוי שם פרויקט', 'שם חדש ללשונית. השם יתעדכן גם בכל ההזמנות של הפרויקט.', p.name);
+    const name = await UI.prompt('שינוי שם פרויקט', D.isCore(p) ? `שם חדש ללשונית. ההזמנות ימשיכו להגיע אליה לפי "${p.coreKey}" בעמודת הפרויקט, וגם לפי השם החדש.` : 'שם חדש ללשונית. השם יתעדכן גם בכל ההזמנות של הפרויקט.', p.name);
     if (!name || name === p.name) return;
-    if (Store.projects().some((q) => q !== p && D.norm(q.name) === D.norm(name))) return UI.toast('כבר קיים פרויקט בשם הזה.', 'error');
+    if (Store.projects().some((q) => q !== p && (D.norm(q.name) === D.norm(name) || D.projKey(q) === D.pk(name)))) return UI.toast('כבר קיים פרויקט בשם הזה.', 'error');
     const n = D.renameProject(p, name);
     renderTabs(); renderMain();
     UI.toast(`שם הפרויקט עודכן${n ? ` ב-${n} הזמנות` : ''}.`, 'ok', 4500);
@@ -1415,7 +1416,7 @@
       actions: [{ label: 'סגירה' }],
     });
   }
-  const inBomP = (r, p) => { const v = D.bomProjOf(r); return v ? v === D.pk(p.name) : r.p === p.id; };
+  const inBomP = (r, p) => { const v = D.bomProjOf(r); return v ? v === D.projKey(p) : r.p === p.id; };
   const bomRoleOf = (id) => { const bm = D.bomMapping(); const r = D.BOM_ROLES.find((x) => bm[x.key] === id); return r ? r.label : ''; };
 
   /* ================= טבלת BOM (כללית או של פרויקט) ================= */
