@@ -101,6 +101,7 @@
       const R = (remote.datasets || {})[k] || { columns: [], rows: [] };
       out.datasets[k] = { columns: mergeList(L.columns, R.columns), rows: mergeList(L.rows, R.rows) };
     }
+    out.gen = remote.gen || local.gen; out.purgedAt = Math.max(remote.purgedAt || 0, local.purgedAt || 0);
     out.settings = (remote.settings && (remote.settings.updatedAt || 0) > ((local.settings && local.settings.updatedAt) || 0)) ? remote.settings : local.settings;
     return out;
   }
@@ -298,7 +299,10 @@
     state.etag = r.etag; state.sha = r.sha;
     const remote = normalizeDb(r.data);
     const before = JSON.stringify(state.db);
-    const merged = normalizeDb(mergeDb(state.db, remote));
+    // הנתונים במאגר "אופסו" (ניקוי היסטוריה) — לוקחים את המרוחק, ושומרים רק שינויים מקומיים שנעשו אחרי הניקוי
+    let local = state.db;
+    if (remote.gen && remote.gen !== local.gen) local = sinceOnly(local, remote.purgedAt || 0);
+    const merged = normalizeDb(mergeDb(local, remote));
     const mergedStr = JSON.stringify(merged);
     const changed = mergedStr !== before;
     state.db = merged;
@@ -307,6 +311,51 @@
     if (changed) { cacheLocal(); emit('remote'); }
     return changed;
   }
+
+  function sinceOnly(db, t) {
+    const keep = (l) => (l || []).filter((r) => (r.updatedAt || 0) > t);
+    const out = emptyDb();
+    out.users = keep(db.users); out.projects = keep(db.projects);
+    for (const k of Object.keys(db.datasets || {})) out.datasets[k] = { columns: keep(db.datasets[k].columns), rows: keep(db.datasets[k].rows) };
+    out.settings = db.settings; out.gen = null;
+    return out;
+  }
+  /** יש רשומות מחוקות? אחרי שמירה מנקים: מסירים אותן לגמרי ומוחקים את כל ההיסטוריה במאגר */
+  const hasTombstones = (db) => [db.users, db.projects, ...Object.values(db.datasets || {}).flatMap((d) => [d.columns, d.rows])].some((l) => (l || []).some((r) => r.deleted));
+  async function ghApi(path, method, body) {
+    const c = state.cfg;
+    const res = await fetch(`https://api.github.com/repos/${encodeURIComponent(c.owner)}/${encodeURIComponent(c.repo)}${path}`, { method, headers: ghHeaders({ 'Content-Type': 'application/json' }), body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+    if (!res.ok) throw new Error('GitHub ' + res.status);
+    return res.json();
+  }
+  let purging = false;
+  async function purgeHistory() {
+    if (!state.cfg || state.cfg.mode !== 'github' || purging) return false;
+    purging = true;
+    try {
+      await pull();
+      const t = now();
+      const db = state.db;
+      const live = (l) => (l || []).filter((r) => !r.deleted);
+      db.users = live(db.users); db.projects = live(db.projects);
+      for (const k of Object.keys(db.datasets)) { db.datasets[k].columns = live(db.datasets[k].columns); db.datasets[k].rows = live(db.datasets[k].rows); }
+      db.gen = uid(); db.purgedAt = t;
+      const c = state.cfg;
+      const json = JSON.stringify(db);
+      const zipped = canGzip && /\.gz$/i.test(c.path);
+      const content = zipped ? bytesToB64(await gzip(json)) : b64encode(json);
+      // קומיט יחיד בלי היסטוריה: blob → tree → commit בלי הורים → הצבעת הענף בכוח
+      const blob = await ghApi('/git/blobs', 'POST', { content, encoding: 'base64' });
+      const tree = await ghApi('/git/trees', 'POST', { tree: [{ path: c.path, mode: '100644', type: 'blob', sha: blob.sha }] });
+      const commit = await ghApi('/git/commits', 'POST', { message: 'נתונים', tree: tree.sha, parents: [] });
+      await ghApi(`/git/refs/heads/${encodeURIComponent(c.branch || 'main')}`, 'PATCH', { sha: commit.sha, force: true });
+      state.sha = blob.sha; state.etag = null; state.pushedVersion = state.version; state.lastSync = now();
+      await cacheLocal(true); emit('remote');
+      return true;
+    } finally { purging = false; }
+  }
+  let purgeTimer = 0;
+  function schedulePurge() { clearTimeout(purgeTimer); purgeTimer = setTimeout(() => { purgeHistory().catch((e) => console.warn('purge', e)); }, 15000); }
 
   async function push() {
     if (!state.cfg || state.cfg.mode !== 'github') return;
@@ -317,6 +366,7 @@
       const r = await ghPut(json, state.sha);
       if (r.conflict) { state.etag = null; await pull(); await new Promise((ok) => setTimeout(ok, 400 * (attempt + 1))); continue; }
       state.sha = r.sha; state.etag = null; state.pushedVersion = v; state.lastSync = now();
+      if (hasTombstones(state.db)) schedulePurge();
       return;
     }
     throw new Error('לא הצלחתי לשמור בגלל עדכונים מקבילים. מנסה שוב בעוד רגע.');
