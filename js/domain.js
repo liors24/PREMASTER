@@ -25,6 +25,8 @@
     const cols = Store.columns('orders');
     if (!cols.length) return;
     const prev = Object.assign({}, s.mapping || {});
+    // מיפוי לעמודות שכבר לא קיימות (נמחקו) — מתעלמים ממנו כדי שיזוהה מחדש
+    for (const k of Object.keys(prev)) if (prev[k] && !cols.some((c) => c.id === prev[k])) delete prev[k];
     // תיקון: עמודת "ספק" שמופתה בעבר למספר ספק עוברת ל"מס׳ ספק", כדי שהדשבורד יציג שם ספק
     const sc = prev.supplier && cols.find((c) => c.id === prev.supplier);
     if (sc && (D.ROLES.find((r) => r.key === 'supplierNo').re.test(sc.name) || D.looksNumeric(sc))) {
