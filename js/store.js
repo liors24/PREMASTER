@@ -113,6 +113,19 @@
       db.datasets[k].rows = db.datasets[k].rows || [];
     }
     db.settings = Object.assign(emptyDb().settings, db.settings || {});
+    return scrubDb(db);
+  }
+  /** רשומה שנמחקה נשמרת רק כ"מצבה" (מזהה + זמן מחיקה) — בלי שום תוכן, כדי שנתונים שנמחקו לא יישמרו בשום מקום */
+  function scrub(list) {
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      if (r && r.deleted && Object.keys(r).length > 4) list[i] = { id: r.id, deleted: true, updatedAt: r.updatedAt || 0, by: r.by || '' };
+    }
+    return list;
+  }
+  function scrubDb(db) {
+    scrub(db.users || []); scrub(db.projects || []);
+    for (const k of Object.keys(db.datasets || {})) { scrub(db.datasets[k].columns); scrub(db.datasets[k].rows); }
     return db;
   }
 
@@ -203,7 +216,7 @@
   function cacheLocal(now) {
     clearTimeout(cacheTimer);
     const run = async () => {
-      try { await IDB.set('db', state.db); localStorage.removeItem(LS_DB); channel && channel.postMessage('db'); }
+      try { scrubDb(state.db); await IDB.set('db', state.db); localStorage.removeItem(LS_DB); channel && channel.postMessage('db'); }
       catch (e) {
         console.warn('IDB failed, falling back to localStorage', e);
         try { localStorage.setItem(LS_DB, JSON.stringify(state.db)); } catch (e2) { emit('status', { status: 'error', message: 'אין מקום לשמירה במכשיר. פנה למנהל המערכת.' }); }
@@ -299,6 +312,7 @@
     if (!state.cfg || state.cfg.mode !== 'github') return;
     for (let attempt = 0; attempt < 4; attempt++) {
       const v = state.version;
+      scrubDb(state.db);
       const json = JSON.stringify(state.db);
       const r = await ghPut(json, state.sha);
       if (r.conflict) { state.etag = null; await pull(); await new Promise((ok) => setTimeout(ok, 400 * (attempt + 1))); continue; }
