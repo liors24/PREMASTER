@@ -1785,7 +1785,7 @@
     g.setZoom(S.zoom);
     // הלוגו מסתובב לאט מאחורי הטבלה, מעורפל
     const gh = g.host.querySelector('.grid-host');
-    if (gh && !gh.querySelector('.grid-mark')) gh.insertAdjacentHTML('afterbegin', `<div class="grid-mark" aria-hidden="true"><i>${engineSvg()}</i></div>`);
+    if (gh && !gh.querySelector('.grid-mark')) gh.insertAdjacentHTML('afterbegin', `<div class="grid-mark" aria-hidden="true"><i>${fanSvg(600, false, true)}</i></div>`);
     applyView(g);
     bindMore();
     const vb = $('#viewBtn'); if (vb) vb.onclick = () => viewDialog(g);
@@ -1902,14 +1902,14 @@
       <path d="M100 86 C 106 92, 106 108, 100 114 C 94 108, 94 92, 100 86 Z" fill="#fff" fill-opacity=".35" transform="rotate(35 100 100)"/>
     </svg>`;
   }
-  function fanSvg(size, big) {
+  function fanSvg(size, big, noRing) {
     const blades = big ? 22 : 12; let b = '';
     for (let i = 0; i < blades; i++) {
       const a = (i * 360) / blades;
       b += `<path d="M50 50 C ${big ? '58 38, 62 22, 57 9' : '58 40, 61 26, 56 12'}" transform="rotate(${a} 50 50)"/>`;
     }
     return `<svg class="logo-fan${big ? ' big' : ''}" width="${size}" height="${size}" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="${big ? 0.7 : 4}" stroke-linecap="round" aria-hidden="true">
-      <circle cx="50" cy="50" r="${big ? 47 : 44}"/>${big ? '<circle cx="50" cy="50" r="41" stroke-dasharray="1 2.2"/>' : ''}${b}<circle cx="50" cy="50" r="${big ? 9 : 11}" fill="currentColor" stroke="none"/></svg>`;
+      ${noRing ? '' : `<circle cx="50" cy="50" r="${big ? 47 : 44}"/>`}${big ? '<circle cx="50" cy="50" r="41" stroke-dasharray="1 2.2"/>' : ''}${b}<circle cx="50" cy="50" r="${big ? 9 : 11}" fill="currentColor" stroke="none"/></svg>`;
   }
 
   window.addEventListener('beforeunload', (e) => {
