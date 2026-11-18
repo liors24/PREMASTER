@@ -1783,6 +1783,9 @@
   }
   function bindViewControls(g) {
     g.setZoom(S.zoom);
+    // הלוגו מסתובב לאט מאחורי הטבלה, מעורפל
+    const gh = g.host.querySelector('.grid-host');
+    if (gh && !gh.querySelector('.grid-mark')) gh.insertAdjacentHTML('afterbegin', `<div class="grid-mark" aria-hidden="true"><i>${fanSvg(560, true)}</i></div>`);
     applyView(g);
     bindMore();
     const vb = $('#viewBtn'); if (vb) vb.onclick = () => viewDialog(g);

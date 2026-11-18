@@ -1305,3 +1305,59 @@ body.is-scrolling .gr:hover .gc, body.is-scrolling .gr:hover .rh { background: i
 :root[data-theme="dark"] .modal { background: rgba(28, 44, 70, .84); border-color: rgba(255, 255, 255, .1); }
 :root[data-theme="dark"] .menu-item:hover:not(:disabled), :root[data-theme="dark"] .menu-item:focus, :root[data-theme="dark"] .colp .chk:hover { background: rgba(255, 255, 255, .08) !important; }
 :root[data-theme="dark"] .colp-more, :root[data-theme="dark"] .colp-q, :root[data-theme="dark"] .colp-sort button { background: rgba(255, 255, 255, .06); }
+
+/* =========================================================
+   טבלה שקופה יותר עם הלוגו מסתובב ומעורפל מאחוריה
+   ========================================================= */
+.grid-host { background: rgba(255, 255, 255, .56) !important; }
+:root[data-theme="dark"] .grid-host { background: rgba(30, 47, 74, .55) !important; }
+.grid-mark { position: absolute; inset: 0; z-index: 0; display: grid; place-items: center; pointer-events: none; overflow: hidden; }
+.grid-mark i { display: block; width: min(68%, 560px); aspect-ratio: 1; will-change: transform; animation: spin 140s linear infinite; }
+.grid-mark svg { width: 100%; height: 100%; color: #2F5BD3; opacity: .16; filter: blur(2.2px); stroke-width: 1.1; }
+:root[data-theme="dark"] .grid-mark svg { color: #8FB3FF; opacity: .17; }
+.grid-scroll { z-index: 1; }
+body.is-scrolling .grid-mark i { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .grid-mark i { animation: none; } }
+/* שורות ותאים: שקופים כדי שהלוגו ייראה, הטקסט מודגש וברור */
+.gr.odd .gc { background: rgba(225, 233, 246, .32); }
+:root[data-theme="dark"] .gr.odd .gc { background: rgba(255, 255, 255, .035); }
+.rh { background: rgba(244, 247, 252, .72) !important; }
+:root[data-theme="dark"] .rh { background: rgba(36, 55, 86, .62) !important; }
+.grid-head, .gh-corner { background: linear-gradient(180deg, rgba(250, 252, 255, .82), rgba(236, 242, 250, .78)) !important; }
+:root[data-theme="dark"] .grid-head, :root[data-theme="dark"] .gh-corner { background: linear-gradient(180deg, rgba(46, 68, 102, .8), rgba(38, 58, 90, .78)) !important; }
+.gc { color: #0E2034; font-weight: 500; text-shadow: 0 0 6px rgba(255, 255, 255, .85); }
+.gc.t-date { color: #24384F; }
+:root[data-theme="dark"] .gc { color: #F3F7FD; text-shadow: 0 1px 4px rgba(8, 16, 28, .7); }
+:root[data-theme="dark"] .gc.t-date { color: #DCE6F3; }
+.gh { color: #13263B; font-weight: 700; }
+:root[data-theme="dark"] .gh { color: #E6EEF8; }
+.gc .chip { text-shadow: none; }
+/* צבעי מצב ברורים יותר, עדיין שקופים */
+.chip.c-open { background: rgba(47, 91, 211, .16); color: #1E3F96; border-color: rgba(47, 91, 211, .36); }
+.chip.c-supplied { background: rgba(30, 142, 90, .17); color: #10603B; border-color: rgba(30, 142, 90, .38); }
+.chip.c-delayed { background: rgba(210, 85, 28, .17); color: #9A3A0B; border-color: rgba(210, 85, 28, .4); }
+.chip.c-closed { background: rgba(126, 87, 176, .17); color: #563785; border-color: rgba(126, 87, 176, .38); }
+.chip.c-cancelled { background: rgba(107, 119, 131, .15); color: #56626E; border-color: rgba(107, 119, 131, .32); }
+:root[data-theme="dark"] .chip.c-open { background: rgba(91, 134, 245, .26); color: #C3D4FF; border-color: rgba(91, 134, 245, .55); }
+:root[data-theme="dark"] .chip.c-supplied { background: rgba(39, 168, 110, .26); color: #A2EBC8; border-color: rgba(39, 168, 110, .55); }
+:root[data-theme="dark"] .chip.c-delayed { background: rgba(224, 104, 46, .27); color: #FFC3A3; border-color: rgba(224, 104, 46, .58); }
+:root[data-theme="dark"] .chip.c-closed { background: rgba(164, 124, 219, .27); color: #DFCCF7; border-color: rgba(164, 124, 219, .55); }
+.gc.qs-full { background: rgba(30, 142, 90, .2) !important; color: #0F5E39; }
+.gc.qs-part { background: rgba(232, 146, 52, .22) !important; color: #8E4A10; }
+.gc.qs-none, .gc.qs-over { background: rgba(214, 64, 52, .18) !important; color: #9E2A21; }
+.gr.odd .gc.qs-full { background: rgba(30, 142, 90, .23) !important; }
+.gr.odd .gc.qs-part { background: rgba(232, 146, 52, .25) !important; }
+.gr.odd .gc.qs-none, .gr.odd .gc.qs-over { background: rgba(214, 64, 52, .21) !important; }
+.gc.d-special { background: rgba(126, 87, 176, .2) !important; color: #553284; }
+:root[data-theme="dark"] .gc.qs-full { background: rgba(39, 168, 110, .26) !important; color: #A2EBC8; }
+:root[data-theme="dark"] .gc.qs-part { background: rgba(240, 160, 70, .26) !important; color: #FBD3A6; }
+:root[data-theme="dark"] .gc.qs-none, :root[data-theme="dark"] .gc.qs-over { background: rgba(230, 90, 75, .25) !important; color: #FFBDB4; }
+:root[data-theme="dark"] .gc.d-special { background: rgba(164, 124, 219, .28) !important; color: #E3D2FA; }
+.gc.overdue { color: #A33A0B; font-weight: 700; }
+:root[data-theme="dark"] .gc.overdue { color: #FFB089; }
+
+/* תפריטים ותתי-חלונות — עוד יותר שקופים */
+.menu, .colp, .colp-side, .col-search { background: rgba(255, 255, 255, .5) !important; -webkit-backdrop-filter: blur(26px) saturate(1.8) !important; backdrop-filter: blur(26px) saturate(1.8) !important; }
+:root[data-theme="dark"] .menu, :root[data-theme="dark"] .colp, :root[data-theme="dark"] .colp-side, :root[data-theme="dark"] .col-search { background: rgba(26, 42, 68, .5) !important; }
+.colp-more, .colp-q, .colp-sort button { background: rgba(255, 255, 255, .45); }
+.menu-item, .colp .chk, .colp-t b { font-weight: 500; }
