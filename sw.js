@@ -1,5 +1,5 @@
 /* Service Worker — אפליקציה למחשב, עבודה בלי רשת, ותזכורת יומית ברקע */
-const CACHE = 'pt-cache-202611181117';
+const CACHE = 'pt-cache-202611181123';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

@@ -33,7 +33,7 @@
     current() { return document.documentElement.dataset.theme || 'light'; },
     apply(t) {
       document.documentElement.dataset.theme = t;
-      document.querySelector('meta[name=theme-color]')?.setAttribute('content', t === 'dark' ? '#0A1320' : '#13263B');
+      document.querySelector('meta[name=theme-color]')?.setAttribute('content', t === 'dark' ? '#1A2945' : '#EEF3FA');
       document.querySelectorAll('.theme-btn').forEach((b) => (b.innerHTML = icon(t === 'dark' ? 'sun' : 'moon', 18)));
     },
     toggle(btn) {
