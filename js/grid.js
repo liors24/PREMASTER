@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
   const RH_W = 56;
-  const HEAD_H = 40;
+  const HEAD_H = 44;
   const MIN_W = 44, MIN_H = 22;
   const esc = (s) => UI.esc(s);
   const clone = (o) => JSON.parse(JSON.stringify(o));
@@ -74,6 +74,8 @@
       this.editor = null;
       this._raf = 0;
       this.flashIds = new Set();
+      this.z = 1;
+      this.hCache = new Map();
       this.ver = new Map();
       this.build();
       this.refresh();
@@ -106,13 +108,58 @@
       this.head.addEventListener('dragover', (e) => this.onDragOver(e));
       this.head.addEventListener('drop', (e) => this.onDrop(e));
       this.head.addEventListener('dragend', () => this.head.querySelectorAll('.drop-l,.drop-r').forEach((x) => x.classList.remove('drop-l', 'drop-r')));
+      // זום לטבלה: Ctrl+גלגלת מעל הטבלה (לא משנה את גודל האתר)
+      this.scroll.addEventListener('wheel', (e) => {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        e.preventDefault();
+        this.setZoom(this.z + (e.deltaY < 0 ? 0.1 : -0.1));
+      }, { passive: false });
       this._ro = new ResizeObserver(() => this.queueRender());
       this._ro.observe(this.scroll);
     }
     destroy() { this._ro && this._ro.disconnect(); this.commitEdit(); this.host.innerHTML = ''; }
     focus() { this.scroll.focus({ preventScroll: true }); }
     get dsObj() { return Store.db.datasets[this.ds]; }
-    rowH(row) { return row.h || this.o.rowHeight(); }
+    rowH(row) {
+      if (row.h) return row.h;
+      const base = this.o.rowHeight();
+      if (!this.o.wrap || !this.o.wrap()) return base;
+      return this.autoH(row, base);
+    }
+    /** גובה אוטומטי לפי אורך הטקסט: כמה שורות צריך התא הארוך ביותר ברוחב העמודה שלו */
+    autoH(row, base) {
+      const key = row.updatedAt + '|' + this.colSig + '|' + base;
+      const hit = this.hCache.get(row.id);
+      if (hit && hit.k === key) return hit.h;
+      const ctx = (this._ctx ||= document.createElement('canvas').getContext('2d'));
+      ctx.font = '400 14px "Rubik", system-ui, sans-serif';
+      let lines = 1;
+      for (const col of this.cols) {
+        if (col.type === 'number') continue;
+        const v = this.val(row, col);
+        if (v === '' || v == null) continue;
+        const txt = display(col, v);
+        const avail = (col.width || 120) - 26;
+        const breaks = (txt.match(/\n/g) || []).length + 1;
+        if (txt.length * 6.2 <= avail && breaks === 1) continue;
+        let need = breaks;
+        if (txt.length * 6.2 > avail) need = Math.max(need, Math.ceil((ctx.measureText(txt).width * 1.08) / avail));
+        if (need > lines) lines = need;
+        if (lines >= 8) { lines = 8; break; }
+      }
+      const h = lines === 1 ? base : Math.max(base, lines * 19 + 14);
+      this.hCache.set(row.id, { k: key, h });
+      return h;
+    }
+    /** זום לטבלה בלבד (לא לכל האתר) */
+    setZoom(z) {
+      this.z = Math.max(0.5, Math.min(2, Math.round(z * 100) / 100));
+      const host = this.host.querySelector('.grid-host');
+      if (host) host.style.zoom = this.z;
+      this.queueRender();
+      this.o.onZoom && this.o.onZoom(this.z);
+      return this.z;
+    }
     val(row, col) { return col.get ? col.get(row) : row.c[col.id]; }
     allow(k) { return !this.o[k] || this.o[k](); }
     isRO(col, row) { return !!col.virtual || !!(this.o.readOnly && this.o.readOnly(col, row)); }
@@ -175,11 +222,12 @@
       this.emitStats();
     }
     layout() {
+      const off = [0];
+      for (let j = 0; j < this.cols.length; j++) off.push(off[j] + (this.cols[j].width || 120));
+      this.colSig = this.cols.map((c) => c.id + ':' + c.width).join(',');
       const t = [0];
       for (let i = 0; i < this.view.length; i++) t.push(t[i] + this.rowH(this.view[i]));
       this.tops = t;
-      const off = [0];
-      for (let j = 0; j < this.cols.length; j++) off.push(off[j] + (this.cols[j].width || 120));
       this.colOff = off;
       this.totalW = RH_W + off[off.length - 1];
       this.head.style.width = this.totalW + 'px';
@@ -230,6 +278,7 @@
       const selRows = this.selectedRowFull();
       const touched = this.selectedRowAny();
       const decorate = this.o.decorate;
+      const wrap = !!(this.o.wrap && this.o.wrap());
       let html = '';
       for (let i = a; i < b; i++) {
         const row = this.view[i];
@@ -241,7 +290,7 @@
           const v = this.val(row, col);
           const txt = display(col, v);
           const d = decorate ? decorate(row, col, v, txt) : null;
-          const cls = 'gc t-' + (col.type || 'text') + (j === 0 ? ' frz' : '') + (!col.virtual && this.o.readOnly && this.o.readOnly(col, row) ? ' ro' : '') + (d && d.cls ? ' ' + d.cls : '');
+          const cls = 'gc t-' + (col.type || 'text') + (wrap ? ' wrap' : '') + (j === 0 ? ' frz' : '') + (!col.virtual && this.o.readOnly && this.o.readOnly(col, row) ? ' ro' : '') + (d && d.cls ? ' ' + d.cls : '');
           html += `<div class="${cls}" data-c="${j}" style="width:${col.width}px" role="gridcell">${d && d.html != null ? d.html : esc(txt)}</div>`;
         }
         html += '</div>';
@@ -398,15 +447,15 @@
       const step = () => {
         if (!pt) return;
         const sr = this.scroll.getBoundingClientRect();
-        let dy = 0; if (pt.y > sr.bottom - 20) dy = 24; else if (pt.y < sr.top + HEAD_H + 10) dy = -24;
-        let dx = 0; if (pt.x < sr.left + 20) dx = -24; else if (pt.x > sr.right - RH_W - 10) dx = 24;
+        let dy = 0; if (pt.y > sr.bottom - 20) dy = 24; else if (pt.y < sr.top + HEAD_H * this.z + 10) dy = -24;
+        let dx = 0; if (pt.x < sr.left + 20) dx = -24; else if (pt.x > sr.right - RH_W * this.z - 10) dx = 24;
         if (dy || dx) { this.scroll.scrollTop += dy; this.scroll.scrollLeft += dx; update(); }
         auto = requestAnimationFrame(step);
       };
       const update = () => {
         const sr = this.scroll.getBoundingClientRect();
-        const x = Math.max(sr.left + 2, Math.min(pt.x, sr.right - RH_W - 2));
-        const y = Math.max(sr.top + HEAD_H + 2, Math.min(pt.y, sr.bottom - 2));
+        const x = Math.max(sr.left + 2, Math.min(pt.x, sr.right - RH_W * this.z - 2));
+        const y = Math.max(sr.top + HEAD_H * this.z + 2, Math.min(pt.y, sr.bottom - 2));
         const el = document.elementFromPoint(type === 'row' ? sr.right - 10 : x, y);
         if (!el) return;
         const h = this.hit(el); if (!h || h.r == null) return;
@@ -437,7 +486,7 @@
     startColResize(j, e) {
       const col = this.cols[j]; const sx = e.clientX; const sw = col.width;
       document.body.classList.add('resizing-col');
-      const move = (ev) => { col.width = Math.max(MIN_W, Math.round(sw + (sx - ev.clientX))); this.layout(); this.renderHead(); this.renderRows(); this.renderSel(); };
+      const move = (ev) => { col.width = Math.max(MIN_W, Math.round(sw + (sx - ev.clientX) / this.z)); this.layout(); this.renderHead(); this.renderRows(); this.renderSel(); };
       const up = () => {
         document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
         document.body.classList.remove('resizing-col');
@@ -458,7 +507,7 @@
     startRowResize(i, e) {
       const row = this.view[i]; const sy = e.clientY; const sh = this.rowH(row);
       document.body.classList.add('resizing-row');
-      const move = (ev) => { row.h = Math.max(MIN_H, Math.round(sh + ev.clientY - sy)); this.layout(); this.renderRows(); this.renderSel(); };
+      const move = (ev) => { row.h = Math.max(MIN_H, Math.round(sh + (ev.clientY - sy) / this.z)); this.layout(); this.renderRows(); this.renderSel(); };
       const up = () => {
         document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
         document.body.classList.remove('resizing-row');
@@ -500,7 +549,7 @@
       const move = (ev) => {
         const sr = this.scroll.getBoundingClientRect();
         if (ev.clientY > sr.bottom - 16) this.scroll.scrollTop += 20;
-        const el = document.elementFromPoint(Math.min(Math.max(ev.clientX, sr.left + 4), sr.right - RH_W - 4), Math.min(Math.max(ev.clientY, sr.top + HEAD_H + 2), sr.bottom - 2));
+        const el = document.elementFromPoint(Math.min(Math.max(ev.clientX, sr.left + 4), sr.right - RH_W * this.z - 4), Math.min(Math.max(ev.clientY, sr.top + HEAD_H * this.z + 2), sr.bottom - 2));
         const h = el && this.hit(el);
         if (h && h.r != null) { target = h.r; draw(); }
       };
@@ -612,6 +661,9 @@
       if (ctrl && (k === 'z' || k === 'Z' || k === 'ז')) { e.preventDefault(); return e.shiftKey ? this.redo() : this.undo(); }
       if (ctrl && (k === 'y' || k === 'ט')) { e.preventDefault(); return this.redo(); }
       if (ctrl && (k === 'a' || k === 'ש')) { e.preventDefault(); return this.selectAll(); }
+      if (ctrl && (k === '=' || k === '+')) { e.preventDefault(); return this.setZoom(this.z + 0.1); }
+      if (ctrl && (k === '-' || k === '_')) { e.preventDefault(); return this.setZoom(this.z - 0.1); }
+      if (ctrl && k === '0') { e.preventDefault(); return this.setZoom(1); }
       if (ctrl && (k === 'd' || k === 'ג')) { e.preventDefault(); return this.fillDown(); }
       if (ctrl && (k === 'c' || k === 'x' || k === 'v' || k === 'ב' || k === 'ס' || k === 'ה')) return; // ייטפל באירועי הלוח
       if (k.length === 1 && !ctrl && !e.altKey) { e.preventDefault(); this.startEdit(k); }

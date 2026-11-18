@@ -19,6 +19,8 @@
     density: localStorage.getItem('pt.density') || 'normal',
     expanded: null,
     newTabs: new Set(),
+    wrap: localStorage.getItem('pt.wrap') !== '0',
+    zoom: +(localStorage.getItem('pt.zoom') || 1),
     pw: null, // סיסמת המשתמש בזיכרון בלבד (לא נשמרת) — להפעלת כניסה מכל מכשיר
   };
   const rowHeight = () => DENSITY[S.density] || 36;
@@ -739,6 +741,7 @@
           <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקה">${icon('trash', 17)}</button>
           <button class="btn btn-ghost danger-ghost" id="clearTbl" title="מחיקת כל השורות בטבלה">${icon('trash', 16)}<span>מחיקת הטבלה</span></button>
         </div>
+        ${viewControls()}
         <div class="tb-group">
           <button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button>
           <button class="btn btn-ghost" id="statusBtn">${icon('check', 16)}<span>סטטוסים</span></button>
@@ -761,7 +764,7 @@
     const g = new Grid(area, {
       dataset: 'orders',
       label: p ? 'הזמנות ' + p.name : 'כל ההזמנות',
-      rowHeight,
+      rowHeight, wrap: () => S.wrap, onZoom: zoomChanged,
       filter: (row) => (!p || D.inProject(row, p)) && (!S.catFilter || catMatch(row, S.catFilter)),
       defaults: () => (p && m.project ? { [m.project]: p.name } : {}),
       colRole: (id) => D.roleOf(id),
@@ -782,6 +785,7 @@
     S.quickProject = p;
     renderQuick();
     S.grid = g;
+    bindViewControls(g);
     $('#q').addEventListener('input', debounce((e) => g.setSearch(e.target.value), 180));
     $('#addRow').onclick = () => { g.appendRows(1); g.focus(); };
     $('#imp').onclick = () => importFlow('orders', p);
@@ -1417,6 +1421,7 @@
           <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקה">${icon('trash', 17)}</button>
           <button class="btn btn-ghost danger-ghost" id="clearTbl" title="מחיקת כל השורות בטבלה">${icon('trash', 16)}<span>מחיקת הטבלה</span></button>
         </div>
+        ${viewControls()}
         <div class="tb-group"><button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button></div>
         <div class="chips" id="chips"><span class="muted sm-note">המצב של כל מק"ט מחושב מהזמנות הפרויקט שלו</span></div>
       </div>
@@ -1429,7 +1434,7 @@
       { id: '_ord', name: 'הזמנות מקושרות', width: 180, type: 'text', virtual: true, get: (r) => { const i = prog().lines.get(r.id); const m = D.mapping(); return i ? i.orders.map((o) => o.c[m.order]).filter(Boolean).join(', ') : ''; } },
     ];
     const g = new Grid($('#gridArea'), {
-      dataset: 'bom', label: p ? 'BOM ' + p.name : 'BOM', rowHeight,
+      dataset: 'bom', label: p ? 'BOM ' + p.name : 'BOM', rowHeight, wrap: () => S.wrap, onZoom: zoomChanged,
       filter: p ? (r) => inBomP(r, p) : null,
       defaults: () => (p ? { [bm.project]: p.name } : {}),
       readOnly: () => !D.can('bom'), colLocked: () => !D.can('bom'),
@@ -1451,6 +1456,7 @@
     applyCaps({ addRow: 'bom', imp: 'import', del: 'bom', bulk: 'bom', clearTbl: 'admin', colsBtn: 'admin' });
     $('#clearTbl').onclick = () => clearTableDialog('bom', p);
     S.grid = g;
+    bindViewControls(g);
     $('#q').addEventListener('input', debounce((e) => g.setSearch(e.target.value), 180));
     $('#addRow').onclick = () => { g.appendRows(1); g.focus(); };
     $('#imp').onclick = () => importFlow('bom', p);
@@ -1679,6 +1685,34 @@
         UI.toast(`${what} נמחקה (${fmtN(rows.length)} שורות)${dropCols ? ', כולל העמודות' : ''}.`, 'ok', 5000);
       } }],
     });
+  }
+
+  /* ================= תצוגת טבלה: זום וגלישת טקסט ================= */
+  function viewControls() {
+    return `<div class="tb-group view-ctl" role="group" aria-label="תצוגת הטבלה">
+      <button class="icon-btn" data-zoom="-" title="הקטנת הטבלה (Ctrl + −)" aria-label="הקטנה">${icon('zoomOut', 17)}</button>
+      <button class="zoom-val" data-zoom="0" title="חזרה ל-100% (Ctrl + 0)">${Math.round(S.zoom * 100)}%</button>
+      <button class="icon-btn" data-zoom="+" title="הגדלת הטבלה (Ctrl + +)" aria-label="הגדלה">${icon('zoomIn', 17)}</button>
+      <button class="icon-btn${S.wrap ? ' on' : ''}" id="wrapBtn" aria-pressed="${S.wrap}" title="גלישת טקסט בתאים">${icon('wrap', 17)}</button>
+    </div>`;
+  }
+  function bindViewControls(g) {
+    g.setZoom(S.zoom);
+    document.querySelectorAll('[data-zoom]').forEach((b) => (b.onclick = () => {
+      const d = b.dataset.zoom;
+      g.setZoom(d === '0' ? 1 : g.z + (d === '+' ? 0.1 : -0.1));
+    }));
+    const w = $('#wrapBtn');
+    if (w) w.onclick = () => {
+      S.wrap = !S.wrap; localStorage.setItem('pt.wrap', S.wrap ? '1' : '0');
+      w.classList.toggle('on', S.wrap); w.setAttribute('aria-pressed', S.wrap);
+      g.hCache.clear(); g.refresh(true);
+      UI.toast(S.wrap ? 'גלישת טקסט פעילה — שורות ארוכות מתרחבות לגובה' : 'גלישת טקסט כבויה', 'info', 2500);
+    };
+  }
+  function zoomChanged(z) {
+    S.zoom = z; localStorage.setItem('pt.zoom', String(z));
+    const v = document.querySelector('.zoom-val'); if (v) v.textContent = Math.round(z * 100) + '%';
   }
 
   /* ================= עזרים ================= */
