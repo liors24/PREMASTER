@@ -13,7 +13,8 @@
     { key: 'qty', label: 'כמות', re: /כמות|qty|quantity/i },
     { key: 'part', label: 'מק"ט', re: /מק["'״]?ט|מקט|part|p\/n|\bpn\b|catalog|קטלוג/i },
     { key: 'order', label: 'מס׳ הזמנה', re: /הזמנ|\bpo\b|p\.o|order/i },
-    { key: 'supplier', label: 'ספק', re: /ספק|supplier|vendor/i },
+    { key: 'supplierNo', label: 'מס׳ ספק', re: /((מס|מספר|קוד|ח\.?פ)[^א-ת]{0,3}ספק)|(ספק[^א-ת]{0,3}(מס|מספר|קוד|#))|((supplier|vendor)\s*(no|num|number|code|id|#))/i },
+    { key: 'supplier', label: 'שם ספק', re: /ספק|supplier|vendor/i },
     { key: 'due', label: 'תאריך אספקה', re: /(תאריך|ת\.).*(אספק|נדרש|יעד|צפוי)|צפי|due|delivery|eta|need\s*date/i },
     { key: 'update', label: 'עדכון', re: /עדכו|update|status\s*note|הערות\s*סטטוס/i },
     { key: 'desc', label: 'תיאור', re: /תיאור|description|\bdesc\b|שם\s*פריט/i },
@@ -23,7 +24,23 @@
     const s = Store.db.settings;
     const cols = Store.columns('orders');
     if (!cols.length) return;
-    const m = D.autoMap(cols, D.ROLES, s.mapping || {});
+    const prev = Object.assign({}, s.mapping || {});
+    // תיקון: עמודת "ספק" שמופתה בעבר למספר ספק עוברת ל"מס׳ ספק", כדי שהדשבורד יציג שם ספק
+    const sc = prev.supplier && cols.find((c) => c.id === prev.supplier);
+    if (sc && (D.ROLES.find((r) => r.key === 'supplierNo').re.test(sc.name) || D.looksNumeric(sc))) {
+      delete prev.supplier;
+      if (!prev.supplierNo) prev.supplierNo = sc.id;
+    }
+    const m = D.autoMap(cols, D.ROLES, prev);
+    // אם "ספק" נפל על עמודה מספרית ויש עמודת ספק אחרת עם טקסט — מעדיפים את השם
+    if (m.supplier) {
+      const c = cols.find((x) => x.id === m.supplier);
+      if (c && D.looksNumeric(c)) {
+        const alt = cols.find((x) => x.id !== c.id && /ספק|supplier|vendor/i.test(x.name) && !D.looksNumeric(x) && !Object.values(m).includes(x.id));
+        if (!m.supplierNo) m.supplierNo = c.id;
+        if (alt) m.supplier = alt.id; else delete m.supplier;
+      }
+    }
     if (JSON.stringify(m) !== JSON.stringify(s.mapping)) { s.mapping = m; s.updatedAt = Store.now(); Store.commit(); }
   };
 
@@ -99,6 +116,14 @@
   D.norm = norm; D.normPart = normPart;
 
   D.mapping = () => Store.db.settings.mapping || {};
+  /** עמודה שרוב הערכים בה מספריים (למשל קוד/מספר ספק) */
+  D.looksNumeric = (col) => {
+    const rows = Store.rows('orders'); let n = 0, num = 0;
+    for (let i = 0; i < rows.length && n < 200; i++) { const v = rows[i].c[col.id]; if (v === '' || v == null) continue; n++; if (/^\s*[\d\-./]+\s*$/.test(String(v))) num++; }
+    return n >= 3 && num / n > 0.8;
+  };
+  /** עמודות שאסור להקפיא (מספר ספק) */
+  D.noFreeze = (col) => { const m = D.mapping(); return m.supplierNo === col.id || D.ROLES.find((r) => r.key === 'supplierNo').re.test(col.name || ''); };
   D.roleOf = (colId) => { const m = D.mapping(); const r = D.ROLES.find((x) => m[x.key] === colId); return r ? r.label : ''; };
   D.setMapping = (patch) => {
     const s = Store.db.settings;

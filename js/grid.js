@@ -265,7 +265,7 @@
         let role = this.o.colRole ? this.o.colRole(c.id) : '';
         if (role && c.name.replace(/["'״׳]/g, '').includes(role.replace(/["'״׳]/g, ''))) role = '';
         const locked = this.o.colLocked && this.o.colLocked(c);
-        h += `<div title="${locked ? 'לקריאה בלבד בתפקיד שלך' : ''}" class="gh${j === 0 ? ' frz' : ''}${selCols.has(j) ? ' hl' : ''}${f ? ' filtered' : ''}${locked ? ' locked' : ''}" data-c="${j}" style="width:${c.width}px" draggable="true" role="columnheader" title="${esc(c.name)}${role ? ' · ' + esc(role) : ''}">
+        h += `<div title="${locked ? 'לקריאה בלבד בתפקיד שלך' : ''}" class="gh${this.isFrz(c, j) ? ' frz' : ''}${selCols.has(j) ? ' hl' : ''}${f ? ' filtered' : ''}${locked ? ' locked' : ''}" data-c="${j}" style="width:${c.width}px" draggable="true" role="columnheader" title="${esc(c.name)}${role ? ' · ' + esc(role) : ''}">
           <span class="gh-text"><span class="gh-name">${esc(c.name)}</span>${role || locked ? `<span class="gh-role${locked ? ' ro' : ''}">${locked ? UI.icon('lock', 10) : ''}${esc(role || 'קריאה בלבד')}</span>` : ''}</span>${marks}
           <button class="gh-menu" data-cm="${j}" tabindex="-1" aria-label="אפשרויות עמודה">${UI.icon('chevron', 14)}</button>
           <span class="gh-rs" data-crs="${j}"></span></div>`;
@@ -299,7 +299,7 @@
           const v = this.val(row, col);
           const txt = display(col, v);
           const d = decorate ? decorate(row, col, v, txt) : null;
-          const cls = 'gc t-' + (col.type || 'text') + (wrap ? ' wrap' : '') + (col.align ? ' al-' + col.align : '') + (j === 0 ? ' frz' : '') + (!col.virtual && this.o.readOnly && this.o.readOnly(col, row) ? ' ro' : '') + (d && d.cls ? ' ' + d.cls : '');
+          const cls = 'gc t-' + (col.type || 'text') + (wrap ? ' wrap' : '') + (col.align ? ' al-' + col.align : '') + (this.isFrz(col, j) ? ' frz' : '') + (!col.virtual && this.o.readOnly && this.o.readOnly(col, row) ? ' ro' : '') + (d && d.cls ? ' ' + d.cls : '');
           html += `<div class="${cls}" data-c="${j}" style="width:${col.width}px" role="gridcell">${d && d.html != null ? d.html : esc(txt)}</div>`;
         }
         html += '</div>';
@@ -1062,6 +1062,7 @@
       inp.focus(); inp.select();
       if (inp.value) run();
     }
+    isFrz(col, j) { return j === 0 && !(this.o.noFreeze && this.o.noFreeze(col)); }
     clearFilters() { this.filters = {}; this.sort = null; this.search = ''; this.refresh(); }
     setSearch(q) { this.search = q.trim(); this.refresh(); }
     exportData() { return { cols: this.cols, rows: this.view }; }

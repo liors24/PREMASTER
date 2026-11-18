@@ -771,7 +771,7 @@
     const g = new Grid(area, {
       dataset: 'orders',
       label: p ? 'הזמנות ' + p.name : 'כל ההזמנות',
-      rowHeight, wrap: () => S.wrap, onZoom: zoomChanged, cellFont: () => S.view, onSearch: () => renderChips(),
+      rowHeight, wrap: () => S.wrap, onZoom: zoomChanged, cellFont: () => S.view, noFreeze: (c) => D.noFreeze(c), onSearch: () => renderChips(),
       filter: (row) => (!p || D.inProject(row, p)) && (!S.catFilter || catMatch(row, S.catFilter)),
       defaults: () => (p && m.project ? { [m.project]: p.name } : {}),
       colRole: (id) => D.roleOf(id),
@@ -1348,7 +1348,7 @@
   }
   function supplierBars(rows) {
     const m = D.mapping();
-    if (!m.supplier) return '<p class="muted pad">הגדר עמודת "ספק" כדי לראות פילוח לפי ספק.</p>';
+    if (!m.supplier) return '<p class="muted pad">הגדר עמודת "שם ספק" (בכפתור עמודות) כדי לראות פילוח לפי ספק.</p>';
     const by = new Map();
     for (const r of rows) {
       const c = D.cat(r); if (c !== 'open' && c !== 'delayed') continue;
@@ -1448,7 +1448,7 @@
       { id: '_ord', name: 'הזמנות מקושרות', width: 180, type: 'text', virtual: true, get: (r) => { const i = prog().lines.get(r.id); const m = D.mapping(); return i ? i.orders.map((o) => o.c[m.order]).filter(Boolean).join(', ') : ''; } },
     ];
     const g = new Grid($('#gridArea'), {
-      dataset: 'bom', label: p ? 'BOM ' + p.name : 'BOM', rowHeight, wrap: () => S.wrap, onZoom: zoomChanged, cellFont: () => S.view, onSearch: () => renderChips(),
+      dataset: 'bom', label: p ? 'BOM ' + p.name : 'BOM', rowHeight, wrap: () => S.wrap, onZoom: zoomChanged, cellFont: () => S.view, noFreeze: (c) => D.noFreeze(c), onSearch: () => renderChips(),
       filter: p ? (r) => inBomP(r, p) : null,
       defaults: () => (p ? { [bm.project]: p.name } : {}),
       readOnly: () => !D.can('bom'), colLocked: () => !D.can('bom'),
