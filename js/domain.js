@@ -15,8 +15,67 @@
     { key: 'order', label: 'מס׳ הזמנה', re: /הזמנ|\bpo\b|p\.o|order/i },
     { key: 'supplier', label: 'ספק', re: /ספק|supplier|vendor/i },
     { key: 'due', label: 'תאריך אספקה', re: /(תאריך|ת\.).*(אספק|נדרש|יעד|צפוי)|צפי|due|delivery|eta|need\s*date/i },
+    { key: 'update', label: 'עדכון', re: /עדכו|update|status\s*note|הערות\s*סטטוס/i },
     { key: 'desc', label: 'תיאור', re: /תיאור|description|\bdesc\b|שם\s*פריט/i },
   ];
+  /** תפקיד שלא זוהה מהכותרות יכול להיות מוגדר ידנית ב"עמודות" */
+  D.ensureMapping = () => {
+    const s = Store.db.settings;
+    const cols = Store.columns('orders');
+    if (!cols.length) return;
+    const m = D.autoMap(cols, D.ROLES, s.mapping || {});
+    if (JSON.stringify(m) !== JSON.stringify(s.mapping)) { s.mapping = m; s.updatedAt = Store.now(); Store.commit(); }
+  };
+
+  /* ---------- סיסמת לשוניות ---------- */
+  D.TAB_PASSWORD = 'KADAM';
+
+  /* ---------- תפקידים והרשאות ---------- */
+  D.USER_ROLES = [
+    { key: 'manager', label: 'מנהל רכש', desc: 'עורך הכול, מייבא קבצים, מנהל עמודות, הרשאות ומשתמשים' },
+    { key: 'expediter', label: 'קדם', desc: 'עורך את כל העמודות — בעיקר סטטוס, עדכון ותאריכי אספקה' },
+    { key: 'ops', label: 'מנהל תפעול', desc: 'עורך כמות נדרשת, כמות שהתקבלה ועדכון' },
+    { key: 'buyer', label: 'קניין', desc: 'מוסיף הזמנות חדשות ועורך כמות נדרשת, כמות שהתקבלה ועדכון' },
+  ];
+  D.roleLabel = (k) => (D.USER_ROLES.find((r) => r.key === k) || {}).label || 'ללא תפקיד';
+  D.CAPS = [
+    ['add', 'הוספת הזמנות חדשות'],
+    ['del', 'מחיקת שורות'],
+    ['import', 'ייבוא קבצים'],
+    ['bom', 'עריכת BOM'],
+    ['admin', 'ניהול עמודות, סטטוסים ופרויקטים'],
+  ];
+  const FIELD_COLS = ['@qty', '@qtySupplied', '@update'];
+  D.DEFAULT_PERMS = {
+    manager: { cols: 'all', add: true, del: true, import: true, bom: true, admin: true },
+    expediter: { cols: 'all', add: true, del: false, import: false, bom: false, admin: false },
+    ops: { cols: FIELD_COLS, add: false, del: false, import: false, bom: false, admin: false },
+    buyer: { cols: FIELD_COLS, add: true, own: true, del: false, import: false, bom: false, admin: false },
+  };
+  D.perms = (role) => {
+    if (role === 'manager') return D.DEFAULT_PERMS.manager; // למנהל רכש תמיד הכול
+    const base = D.DEFAULT_PERMS[role] || D.DEFAULT_PERMS.ops;
+    return Object.assign({}, base, ((Store.db.settings.perms || {})[role]) || {});
+  };
+  /** רשימת העמודות שתפקיד יכול לערוך (null = כולן) */
+  D.editableCols = (role) => {
+    const p = D.perms(role);
+    if (p.cols === 'all') return null;
+    const m = D.mapping();
+    return new Set((p.cols || []).map((c) => (c[0] === '@' ? m[c.slice(1)] : c)).filter(Boolean));
+  };
+  D.me = () => Store.currentUser();
+  D.can = (cap) => { const u = D.me(); return !!(u && u.role && D.perms(u.role)[cap]); };
+  let editCache = { at: 0 };
+  D.canEditCell = (col, row) => {
+    const u = D.me(); if (!u || !u.role) return false;
+    if (u.role === 'manager') return true;
+    if (editCache.at !== Store.db.settings.updatedAt || editCache.role !== u.role) editCache = { at: Store.db.settings.updatedAt, role: u.role, set: D.editableCols(u.role), own: D.perms(u.role).own };
+    if (!editCache.set) return true;
+    if (editCache.own && row && row.createdBy === u.id) return true; // קניין עורך את ההזמנות שהוא הוסיף
+    return editCache.set.has(col.id);
+  };
+  D.hasManager = () => Store.db.users.some((u) => !u.deleted && u.role === 'manager');
   D.BOM_ROLES = [
     { key: 'project', label: 'פרויקט', re: /פרוי?קט|project|program|תוכנית/i },
     { key: 'assembly', label: 'מכלול', re: /מכלול|assembly|\basm\b|assy/i },

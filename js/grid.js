@@ -114,7 +114,8 @@
     get dsObj() { return Store.db.datasets[this.ds]; }
     rowH(row) { return row.h || this.o.rowHeight(); }
     val(row, col) { return col.get ? col.get(row) : row.c[col.id]; }
-    isRO(col) { return !!col.virtual || !!(this.o.readOnly && this.o.readOnly(col)); }
+    allow(k) { return !this.o[k] || this.o[k](); }
+    isRO(col, row) { return !!col.virtual || !!(this.o.readOnly && this.o.readOnly(col, row)); }
 
     /* ================= נתונים לתצוגה ================= */
     baseRows() {
@@ -206,8 +207,9 @@
         const marks = (f ? `<span class="gh-mark" title="מסונן">${UI.icon('filter', 12)}</span>` : '') + (s ? `<span class="gh-mark">${UI.icon(s > 0 ? 'sortAsc' : 'sortDesc', 12)}</span>` : '');
         let role = this.o.colRole ? this.o.colRole(c.id) : '';
         if (role && c.name.replace(/["'״׳]/g, '').includes(role.replace(/["'״׳]/g, ''))) role = '';
-        h += `<div class="gh${selCols.has(j) ? ' hl' : ''}${f ? ' filtered' : ''}" data-c="${j}" style="width:${c.width}px" draggable="true" role="columnheader" title="${esc(c.name)}${role ? ' · ' + esc(role) : ''}">
-          <span class="gh-text"><span class="gh-name">${esc(c.name)}</span>${role ? `<span class="gh-role">${esc(role)}</span>` : ''}</span>${marks}
+        const locked = this.o.colLocked && this.o.colLocked(c);
+        h += `<div title="${locked ? 'לקריאה בלבד בתפקיד שלך' : ''}" class="gh${j === 0 ? ' frz' : ''}${selCols.has(j) ? ' hl' : ''}${f ? ' filtered' : ''}${locked ? ' locked' : ''}" data-c="${j}" style="width:${c.width}px" draggable="true" role="columnheader" title="${esc(c.name)}${role ? ' · ' + esc(role) : ''}">
+          <span class="gh-text"><span class="gh-name">${esc(c.name)}</span>${role || locked ? `<span class="gh-role${locked ? ' ro' : ''}">${locked ? UI.icon('lock', 10) : ''}${esc(role || 'קריאה בלבד')}</span>` : ''}</span>${marks}
           <button class="gh-menu" data-cm="${j}" tabindex="-1" aria-label="אפשרויות עמודה">${UI.icon('chevron', 14)}</button>
           <span class="gh-rs" data-crs="${j}"></span></div>`;
       });
@@ -232,14 +234,14 @@
       for (let i = a; i < b; i++) {
         const row = this.view[i];
         const h = this.rowH(row);
-        html += `<div class="gr${selRows.has(i) ? ' rsel' : ''}${this.flashIds.has(row.id) ? ' flash' : ''}" style="top:${this.tops[i]}px;height:${h}px;width:${this.totalW}px" data-r="${i}" role="row">`;
+        html += `<div class="gr${i % 2 ? ' odd' : ''}${selRows.has(i) ? ' rsel' : ''}${this.flashIds.has(row.id) ? ' flash' : ''}" style="top:${this.tops[i]}px;height:${h}px;width:${this.totalW}px" data-r="${i}" role="row">`;
         html += `<div class="rh${touched.has(i) ? ' hl' : ''}" data-rh="${i}">${i + 1}<span class="rh-rs" data-rrs="${i}"></span></div>`;
         for (let j = 0; j < this.cols.length; j++) {
           const col = this.cols[j];
           const v = this.val(row, col);
           const txt = display(col, v);
           const d = decorate ? decorate(row, col, v, txt) : null;
-          const cls = 'gc t-' + (col.type || 'text') + (d && d.cls ? ' ' + d.cls : '');
+          const cls = 'gc t-' + (col.type || 'text') + (j === 0 ? ' frz' : '') + (!col.virtual && this.o.readOnly && this.o.readOnly(col, row) ? ' ro' : '') + (d && d.cls ? ' ' + d.cls : '');
           html += `<div class="${cls}" data-c="${j}" style="width:${col.width}px" role="gridcell">${d && d.html != null ? d.html : esc(txt)}</div>`;
         }
         html += '</div>';
@@ -476,7 +478,7 @@
     autofit(j) {
       const col = this.cols[j];
       const ctx = (this._ctx ||= document.createElement('canvas').getContext('2d'));
-      ctx.font = '500 13px "IBM Plex Sans Hebrew", system-ui, sans-serif';
+      ctx.font = '400 14px "Rubik", system-ui, sans-serif';
       let w = ctx.measureText(col.name).width + 54;
       const n = Math.min(this.view.length, 3000);
       for (let i = 0; i < n; i++) w = Math.max(w, ctx.measureText(display(col, this.val(this.view[i], col))).width + 28);
@@ -516,7 +518,7 @@
       this.transact((tx) => {
         for (let c = src.c1; c <= src.c2; c++) {
           const col = this.cols[c];
-          if (this.isRO(col)) continue;
+          if (col.virtual) continue;
           const vals = []; for (let r = src.r1; r <= src.r2; r++) vals.push(this.val(this.view[r], col));
           // סדרה מספרית (1,2,3…) כמו באקסל
           let stepv = null;
@@ -525,7 +527,7 @@
             if (vals.every((v, i) => i === 0 || Math.abs(v - vals[i - 1] - d) < 1e-9)) stepv = d;
           }
           for (let r = from; r <= to; r++) {
-            const row = this.view[r]; if (!row) continue;
+            const row = this.view[r]; if (!row || this.isRO(col, row)) continue;
             let v;
             if (stepv !== null) v = dir > 0 ? vals[h - 1] + stepv * (r - src.r2) : vals[0] - stepv * (src.r1 - r);
             else { const k = dir > 0 ? (r - src.r1) % h : (h - 1) - ((src.r1 - 1 - r) % h); v = vals[(k + h) % h]; }
@@ -556,6 +558,7 @@
     }
     onDrop(e) {
       const gh = e.target.closest('.gh'); const from = this._dragCol; this._dragCol = null;
+      if (!this.allow('canAdmin')) return;
       if (!gh || from == null) return;
       e.preventDefault();
       const r = gh.getBoundingClientRect();
@@ -619,7 +622,7 @@
       if (!this.view.length || !this.cols.length) return;
       const { r, c } = this.active;
       const row = this.view[r], col = this.cols[c];
-      if (this.isRO(col)) return UI.toast('העמודה הזו מחושבת אוטומטית ואינה ניתנת לעריכה.', 'info');
+      if (this.isRO(col, row)) return UI.toast(col.virtual ? 'העמודה הזו מחושבת אוטומטית ואינה ניתנת לעריכה.' : 'אין לך הרשאה לערוך את העמודה הזו.', 'info');
       this.ensureVisible(r, c);
       const rect = this.rectOf({ r1: r, r2: r, c1: c, c2: c });
       const wrap = document.createElement('div');
@@ -675,7 +678,7 @@
       this.transact((tx) => {
         for (const { row, col } of this.eachSelectedCell()) {
           if (colFilter && col.id !== colFilter) continue;
-          if (this.isRO(col)) continue;
+          if (this.isRO(col, row)) continue;
           tx.touch(row); row.c[col.id] = parseValue(col, raw);
         }
       });
@@ -684,13 +687,13 @@
     setColumnForSelectedRows(colId, raw) {
       const col = Store.columns(this.ds).find((c) => c.id === colId); if (!col) return;
       const rows = this.selectedRows();
-      this.transact((tx) => rows.forEach((row) => { tx.touch(row); row.c[colId] = parseValue(col, raw); }));
+      this.transact((tx) => rows.forEach((row) => { if (this.isRO(col, row)) return; tx.touch(row); row.c[colId] = parseValue(col, raw); }));
     }
     clearSelection() {
       this.transact((tx) => {
         for (const { row, col } of this.eachSelectedCell()) {
           if (this.val(row, col) === '' || this.val(row, col) == null) continue;
-          if (this.isRO(col)) continue;
+          if (this.isRO(col, row)) continue;
           tx.touch(row); row.c[col.id] = '';
         }
       });
@@ -702,8 +705,8 @@
           const srcR = g.r1 === g.r2 ? g.r1 - 1 : g.r1;
           if (srcR < 0) continue;
           for (let c = g.c1; c <= g.c2; c++) {
-            const col = this.cols[c]; if (this.isRO(col)) continue; const v = this.val(this.view[srcR], col);
-            for (let r = (g.r1 === g.r2 ? g.r1 : g.r1 + 1); r <= g.r2; r++) { const row = this.view[r]; tx.touch(row); row.c[col.id] = v; }
+            const col = this.cols[c]; if (col.virtual) continue; const v = this.val(this.view[srcR], col);
+            for (let r = (g.r1 === g.r2 ? g.r1 : g.r1 + 1); r <= g.r2; r++) { const row = this.view[r]; if (this.isRO(col, row)) continue; tx.touch(row); row.c[col.id] = v; }
           }
         }
       });
@@ -717,6 +720,7 @@
         touch: (row) => { if (!before.has(row.id)) before.set(row.id, clone(row)); Store.touch(row); return row; },
         create: (o) => {
           const row = { id: Store.uid(), c: Object.assign({}, this.o.defaults ? this.o.defaults() : {}), o, createdAt: Store.now() };
+          row.createdBy = Store.session && Store.session.userId;
           if (this.o.rowProps) Object.assign(row, this.o.rowProps());
           before.set(row.id, Object.assign(clone(row), { deleted: true }));
           Store.touch(row); ds.rows.push(row); this.flashIds.add(row.id);
@@ -756,6 +760,7 @@
     }
     maxOrder() { return Store.rows(this.ds).reduce((m, r) => Math.max(m, r.o || 0), 0); }
     insertRows(where) {
+      if (!this.allow('canAdd')) return UI.toast('אין לך הרשאה להוסיף שורות.', 'info');
       const rows = this.selectedRows();
       const count = Math.max(1, rows.length);
       const sorted = [...Store.rows(this.ds)].sort((a, b) => (a.o || 0) - (b.o || 0));
@@ -775,6 +780,7 @@
       this.selectRowIds(created);
     }
     appendRows(n = 1) {
+      if (!this.allow('canAdd')) return UI.toast('אין לך הרשאה להוסיף שורות.', 'info');
       let o = this.maxOrder();
       const ids = [];
       this.transact((tx) => { for (let i = 0; i < n; i++) ids.push(tx.create(++o).id); });
@@ -783,6 +789,7 @@
       if (idx >= 0) { this.active = { r: idx, c: 0 }; this.ensureVisible(idx, 0); this.renderSel(); }
     }
     deleteSelectedRows() {
+      if (!this.allow('canDel')) return UI.toast('אין לך הרשאה למחוק שורות.', 'info');
       const rows = this.selectedRows();
       if (!rows.length) return;
       this.transact((tx) => rows.forEach((r) => { tx.touch(r); r.deleted = true; }));
@@ -823,17 +830,20 @@
       if (m.length === 1 && m[0].length === 1) return this.setValueForSelection(m[0][0]);
       const g = this.norm(this.ranges[0]);
       const startR = g.r1, startC = g.c1;
-      const need = startR + m.length - this.view.length;
+      let need = startR + m.length - this.view.length;
+      if (need > 0 && this.o.canAdd && !this.o.canAdd()) { UI.toast('אין לך הרשאה להוסיף שורות — הודבקו רק השורות הקיימות.', 'info', 5000); m.length = this.view.length - startR; need = 0; }
+      let blocked = 0;
       this.transact((tx) => {
         const targets = this.view.slice(startR, startR + m.length);
         let o = this.maxOrder();
         for (let k = 0; k < need; k++) targets.push(tx.create(++o));
         m.forEach((line, i) => {
           const row = targets[i]; if (!row) return;
-          tx.touch(row);
+          let touched = false;
           line.forEach((v, j) => {
             const col = this.cols[startC + j]; if (!col) return;
-            if (this.isRO(col)) return;
+            if (this.isRO(col, row)) { blocked++; return; }
+            if (!touched) { tx.touch(row); touched = true; }
             row.c[col.id] = parseValue(col, v);
           });
         });
@@ -842,6 +852,7 @@
       const c2 = Math.min(this.cols.length - 1, startC + Math.max(...m.map((l) => l.length)) - 1);
       this.setSel([{ r1: startR, c1: startC, r2, c2 }], { r: startR, c: startC }, false);
       if (need > 0) UI.toast(`נוספו ${need} שורות חדשות מההדבקה`, 'ok');
+      if (blocked) UI.toast(`${blocked} תאים לא עודכנו — אין לך הרשאת עריכה לעמודות האלה.`, 'info', 5000);
     }
     async pasteFromMenu() {
       try { const t = await navigator.clipboard.readText(); this.pasteText(t); }
@@ -862,10 +873,10 @@
         { label: 'מילוי למטה', icon: 'fillDown', shortcut: 'Ctrl+D', action: () => this.fillDown() },
         { label: 'ניקוי תוכן', icon: 'x', shortcut: 'Delete', action: () => this.clearSelection() },
         { sep: true },
-        { label: `הוספת ${rows > 1 ? rows + ' שורות' : 'שורה'} מעל`, icon: 'rowAbove', action: () => this.insertRows('above') },
-        { label: `הוספת ${rows > 1 ? rows + ' שורות' : 'שורה'} מתחת`, icon: 'rowBelow', action: () => this.insertRows('below') },
+        { label: `הוספת ${rows > 1 ? rows + ' שורות' : 'שורה'} מעל`, icon: 'rowAbove', disabled: !this.allow('canAdd'), action: () => this.insertRows('above') },
+        { label: `הוספת ${rows > 1 ? rows + ' שורות' : 'שורה'} מתחת`, icon: 'rowBelow', disabled: !this.allow('canAdd'), action: () => this.insertRows('below') },
         { label: 'גובה שורה…', icon: 'height', action: () => this.rowHeightDialog() },
-        { label: rows > 1 ? `מחיקת ${rows} שורות` : 'מחיקת שורה', icon: 'trash', danger: true, action: () => this.deleteSelectedRows() },
+        { label: rows > 1 ? `מחיקת ${rows} שורות` : 'מחיקת שורה', icon: 'trash', danger: true, disabled: !this.allow('canDel'), action: () => this.deleteSelectedRows() },
         { sep: true },
         col && { label: `סינון לפי "${display(col, (this.view[this.active.r] ? this.val(this.view[this.active.r], col) : '')) || 'ריק'}"`, icon: 'filter', action: () => { this.filters[col.id] = new Set([display(col, this.val(this.view[this.active.r], col))]); this.refresh(); this.o.onFilter && this.o.onFilter(); } },
         col && { label: `מיון לפי "${col.name}" (א→ת)`, icon: 'sortAsc', action: () => this.setSort(col.id, 1) },
@@ -895,6 +906,8 @@
       if (col.virtual) return UI.menu(x, y, [{ title: col.name + ' · מחושב' }, { label: 'מיון עולה', icon: 'sortAsc', action: () => this.setSort(col.id, 1) }, { label: 'מיון יורד', icon: 'sortDesc', action: () => this.setSort(col.id, -1) }, { label: 'סינון ערכים…', icon: 'filter', action: () => this.filterDialog(col) }, this.filters[col.id] ? { label: 'ניקוי סינון', icon: 'x', action: () => { delete this.filters[col.id]; this.refresh(); } } : null]);
       const typeItem = (t, l) => ({ label: (col.type === t ? '✓ ' : '') + l, icon: col.type === t ? 'check' : null, action: () => { col.type = t; Store.touch(col); Store.commit(); this.refresh(true); } });
       const extra = this.o.columnMenuExtra ? this.o.columnMenuExtra(col) : [];
+      const admin = this.allow('canAdmin');
+      if (!admin) return UI.menu(x, y, [{ title: col.name }, { label: 'מיון עולה', icon: 'sortAsc', action: () => this.setSort(col.id, 1) }, { label: 'מיון יורד', icon: 'sortDesc', action: () => this.setSort(col.id, -1) }, { label: 'סינון ערכים…', icon: 'filter', action: () => this.filterDialog(col) }, this.filters[col.id] ? { label: 'ניקוי סינון', icon: 'x', action: () => { delete this.filters[col.id]; this.refresh(); this.o.onFilter && this.o.onFilter(); } } : null, { label: 'התאמת רוחב לתוכן', icon: 'columns', action: () => this.autofit(j) }]);
       UI.menu(x, y, [
         { title: col.name },
         { label: 'מיון עולה', icon: 'sortAsc', action: () => this.setSort(col.id, 1) },

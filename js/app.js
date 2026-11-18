@@ -47,6 +47,95 @@
   };
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => { if (!localStorage.getItem('pt.theme')) Theme.apply(e.matches ? 'dark' : 'light'); });
 
+  /* ================= התראה יומית על הזמנות בעיכוב ================= */
+  const Notifier = {
+    timer: null,
+    async permit() {
+      if (!('Notification' in window)) { UI.toast('הדפדפן הזה לא תומך בהתראות.', 'error'); return false; }
+      if (Notification.permission === 'default') { try { await Notification.requestPermission(); } catch { } }
+      return Notification.permission === 'granted';
+    },
+    inWindow(n, d = new Date()) {
+      if (!n || !(n.days || []).includes(d.getDay())) return false;
+      const hm = d.toTimeString().slice(0, 5);
+      return hm >= (n.from || '00:00') && hm <= (n.to || '23:59');
+    },
+    async start() {
+      clearInterval(this.timer);
+      const u = Store.currentUser();
+      await Store.kvSet('notify', u ? { userId: u.id, notify: u.notify || null } : null); // גם ל-Service Worker
+      PWA.periodic();
+      if (!u || !u.notify || !u.notify.on) return;
+      this.timer = setInterval(() => this.check(), 60000);
+      setTimeout(() => this.check(), 5000);
+    },
+    async check(force) {
+      const u = Store.currentUser(); if (!u) return;
+      const n = u.notify;
+      if (!force && (!n || !n.on)) return;
+      if (!('Notification' in window) || Notification.permission !== 'granted') { if (force) UI.toast('ההתראות לא מאושרות בדפדפן הזה.', 'error', 6000); return; }
+      if (!force && !this.inWindow(n)) return;
+      const today = D.today();
+      if (!force && (await Store.kvGet('notifiedOn')) === today) return;
+      const rows = Store.rows('orders').filter((r) => D.cat(r) === 'delayed');
+      if (!rows.length && !force) return;
+      if (!force) await Store.kvSet('notifiedOn', today);
+      const m = D.mapping(); const by = new Map();
+      for (const r of rows) { const k = String((m.project && r.c[m.project]) || 'ללא פרויקט'); by.set(k, (by.get(k) || 0) + 1); }
+      const title = rows.length ? `${fmtN(rows.length)} הזמנות בעיכוב` : 'אין כרגע הזמנות בעיכוב';
+      const body = rows.length ? [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, v]) => `${k}: ${v}`).join(' · ') + '\nלחיצה פותחת את הרשימה' : 'זו התראת בדיקה — ההתראות פועלות.';
+      const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'delayed-daily', dir: 'rtl', lang: 'he', data: { url: location.pathname + '#delayed' } };
+      try {
+        const reg = PWA.reg || (navigator.serviceWorker && await navigator.serviceWorker.getRegistration());
+        if (reg) await reg.showNotification(title, opts);
+        else { const nt = new Notification(title, opts); nt.onclick = () => { window.focus(); openDelayed(); nt.close(); }; }
+      } catch (e) { console.warn(e); const nt = new Notification(title, opts); nt.onclick = () => { window.focus(); openDelayed(); }; }
+    },
+  };
+  function openDelayed() {
+    if (!Store.currentUser() || !$('#main')) return;
+    S.route = { tab: 'main', sub: 'orders' }; renderTabs(); renderMain();
+    S.catFilter = 'delayed'; S.grid && (S.grid.refresh(), renderChips(), renderQuick());
+  }
+
+  /* ================= אפליקציה למחשב (PWA) ================= */
+  const PWA = {
+    deferred: null, reg: null,
+    init() {
+      if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+        navigator.serviceWorker.register('sw.js?v=' + (window.APP_VERSION || '1')).then((r) => { this.reg = r; this.periodic(); }).catch((e) => console.warn('sw', e));
+        navigator.serviceWorker.addEventListener('message', (e) => { if (e.data === 'open-delayed') openDelayed(); });
+      }
+      window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); this.deferred = e; this.sync(); });
+      window.addEventListener('appinstalled', () => { this.deferred = null; this.sync(); UI.toast('האפליקציה הותקנה במחשב.', 'ok'); });
+    },
+    installed() { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; },
+    canInstall() { return !!this.deferred && !this.installed(); },
+    sync() { const b = $('#installBtn'); if (b) b.hidden = !this.canInstall(); },
+    async install() {
+      if (this.installed()) return UI.toast('האפליקציה כבר מותקנת במחשב הזה.', 'info');
+      if (this.deferred) { this.deferred.prompt(); await this.deferred.userChoice.catch(() => null); this.deferred = null; this.sync(); return; }
+      const ua = navigator.userAgent;
+      const how = /iPhone|iPad/.test(ua) ? 'בספארי: כפתור השיתוף ← "הוספה למסך הבית".'
+        : /Safari/.test(ua) && !/Chrome|Edg/.test(ua) ? 'בספארי במק: תפריט "קובץ" ← "הוספה ל-Dock".'
+        : /Edg/.test(ua) ? 'ב-Edge: תפריט ⋯ ← "אפליקציות" ← "התקנת האתר הזה כאפליקציה".'
+        : 'ב-Chrome: סמל ההתקנה בצד שורת הכתובת, או תפריט ⋮ ← "שמירה ושיתוף" ← "התקנת הדף כאפליקציה".';
+      UI.modal({ title: 'התקנה כאפליקציה במחשב', body: `<p>${how}</p><p class="muted">אחרי ההתקנה המערכת נפתחת בחלון משלה, עם סמל בשולחן העבודה ובשורת המשימות — כמו וואטסאפ ווב. כדי לקבל את התזכורת היומית גם בלי לפתוח אותה, אפשר להגדיר שהיא תיפתח עם הפעלת המחשב.</p>`, actions: [{ label: 'הבנתי', primary: true }] });
+    },
+    async periodic() {
+      try {
+        const reg = this.reg || (navigator.serviceWorker && await navigator.serviceWorker.getRegistration());
+        if (!reg || !('periodicSync' in reg)) return;
+        const st = await navigator.permissions.query({ name: 'periodic-background-sync' });
+        if (st.state !== 'granted') return;
+        const u = Store.currentUser();
+        if (u && u.notify && u.notify.on) await reg.periodicSync.register('delayed-check', { minInterval: 60 * 60 * 1000 });
+        else await reg.periodicSync.unregister('delayed-check');
+      } catch { }
+    },
+  };
+  PWA.init();
+
   /* ================= הפעלה ================= */
   async function start() {
     readConnectLink();
@@ -128,7 +217,7 @@
     app.innerHTML = `
     <div class="gate">
       <section class="gate-art" aria-hidden="true">${fanSvg(340, true)}
-        <div class="gate-caption"><b>מעקב הזמנות רכש</b><span>${Store.cfg.mode === 'github' ? 'מחובר ל-' + esc(Store.cfg.owner + '/' + Store.cfg.repo) : 'מצב ניסיון מקומי'}</span></div>
+        <div class="gate-caption"><b>מעקב הזמנות רכש</b><span>טבלת הזמנות, פרויקטים, דשבורד ו-BOM במקום אחד</span></div>
       </section>
       <section class="gate-form">
         <button class="icon-btn theme-btn gate-theme" type="button" data-theme-toggle aria-label="מצב כהה / בהיר">${icon(Theme.current() === 'dark' ? 'sun' : 'moon', 18)}</button>
@@ -145,7 +234,9 @@
           </div>
           <label class="field"><span>סיסמה${mode === 'register' ? ' (לפחות 8 תווים)' : ''}</span><input name="pw" type="password" required ${mode === 'register' ? 'minlength="8"' : ''} autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}"></label>
           ${mode === 'register' ? `<label class="field"><span>אימות סיסמה</span><input name="pw2" type="password" required minlength="8" autocomplete="new-password"></label>
-            <label class="field" data-teamwrap hidden><span>קוד צוות (מקבלים ממנהל המערכת)</span><input name="team" type="password" autocomplete="off"></label>` : '<label class="chk"><input type="checkbox" name="remember" checked><span>להישאר מחובר במכשיר הזה</span></label>'}
+            <label class="field" data-teamwrap hidden><span>קוד צוות (מקבלים ממנהל המערכת)</span><input name="team" type="password" autocomplete="off"></label>
+            ${roleField(null)}
+            ${notifyFields({ on: true, days: [0, 1, 2, 3, 4], from: '08:00', to: '17:00' })}` : '<label class="chk"><input type="checkbox" name="remember" checked><span>להישאר מחובר במכשיר הזה</span></label>'}
           <div class="cloud-note" data-cloud hidden>${icon('cloud', 16)}<span></span></div>
           <div class="form-actions"><button class="btn btn-primary" type="submit">${icon(mode === 'login' ? 'user' : 'plus', 16)}<span>${mode === 'login' ? 'כניסה' : 'הרשמה וכניסה'}</span></button></div>
           <p class="form-msg err" role="alert"></p>
@@ -182,7 +273,10 @@
           if (fd.pw.length < 8) throw new Error('הסיסמה צריכה להכיל לפחות 8 תווים.');
           if (remote) await Store.remoteJoin(fd.team || '');
           await Store.syncNow();
-          const u = Store.register(fd.first, fd.last, fd.pw);
+          const role = fd.role;
+          if (!role) throw new Error('בחר תפקיד.');
+          if (role === 'manager' && D.hasManager()) throw new Error('כבר קיים מנהל רכש במערכת. בחר תפקיד אחר — מנהל הרכש יוכל לשנות אותו.');
+          const u = Store.register(fd.first, fd.last, fd.pw, { role, notify: readNotify(f) });
           await Store.syncNow();
           Store.login(fd.first, fd.last, fd.pw, true);
           S.pw = fd.pw;
@@ -228,6 +322,47 @@
     const acc = await Store.fetchAccess(true).catch(() => null);
     if (acc && !acc.team) teamCodeDialog(true);
   }
+  /* ---------- שדות תפקיד והתראות ---------- */
+  const DAYS = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
+  function roleField(cur, allowManager) {
+    const canMgr = allowManager != null ? allowManager : !D.hasManager();
+    return `<fieldset class="role-pick"><legend>תפקיד</legend>${D.USER_ROLES.filter((r) => r.key !== 'manager' || canMgr || cur === 'manager').map((r) => `
+      <label class="role-opt"><input type="radio" name="role" value="${r.key}" ${cur === r.key ? 'checked' : ''} required><span><b>${r.label}</b><em>${r.desc}</em></span></label>`).join('')}</fieldset>`;
+  }
+  function notifyFields(n) {
+    n = Object.assign({ on: false, days: [0, 1, 2, 3, 4], from: '08:00', to: '17:00' }, n || {});
+    return `<fieldset class="notify-pick"><legend>תזכורת יומית על הזמנות בעיכוב</legend>
+      <label class="chk"><input type="checkbox" name="nOn" ${n.on ? 'checked' : ''}><span>לשלוח לי התראה למחשב פעם ביום, בשעות הפעילות שלי</span></label>
+      <div class="days">${DAYS.map((d, i) => `<label class="day"><input type="checkbox" name="nDay" value="${i}" ${n.days.includes(i) ? 'checked' : ''}><span>${d}</span></label>`).join('')}</div>
+      <div class="hours"><label>משעה <input type="time" name="nFrom" value="${n.from}"></label><label>עד <input type="time" name="nTo" value="${n.to}"></label></div>
+    </fieldset>`;
+  }
+  function readNotify(root) {
+    return {
+      on: !!root.querySelector('[name=nOn]')?.checked,
+      days: [...root.querySelectorAll('[name=nDay]:checked')].map((x) => +x.value),
+      from: root.querySelector('[name=nFrom]')?.value || '08:00',
+      to: root.querySelector('[name=nTo]')?.value || '17:00',
+    };
+  }
+  /** משתמש ותיק בלי תפקיד — בוחר פעם אחת */
+  function ensureRole() {
+    const u = Store.currentUser(); if (!u || u.role) return;
+    const users = Store.db.users.filter((x) => !x.deleted).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const first = users[0] && users[0].id === u.id;
+    const body = document.createElement('div');
+    body.innerHTML = `<p class="muted">כל משתמש מקבל תפקיד, והתפקיד קובע אילו עמודות הוא יכול לערוך.</p>${roleField(first && !D.hasManager() ? 'manager' : null, !D.hasManager())}`;
+    const m = UI.modal({
+      title: 'מה התפקיד שלך?', body,
+      actions: [{ label: 'שמירה', primary: true, icon: 'check', action: (el) => {
+        const r = el.querySelector('[name=role]:checked'); if (!r) throw new Error('בחר תפקיד.');
+        if (r.value === 'manager' && D.hasManager()) throw new Error('כבר קיים מנהל רכש.');
+        Store.updateUser(u.id, { role: r.value }); renderShell();
+      } }],
+    });
+    m.el.querySelector('[data-x]').remove();
+  }
+
   /** מכשיר מחובר שבו למשתמש עוד אין כניסה מכל מכשיר (למשל אחרי חיבור בקישור) — משלימים פעם אחת */
   let remoteChecked = false;
   async function checkRemoteSetup() {
@@ -252,10 +387,11 @@
     app.innerHTML = `
     <div class="shell">
       <header class="topbar">
-        <div class="brand">${fanSvg(26)}<div><b>מעקב הזמנות</b><span>רכש · ${Store.cfg.mode === 'github' ? esc(Store.cfg.repo) : 'מקומי'}</span></div></div>
+        <div class="brand">${fanSvg(26)}<div><b>מעקב הזמנות</b><span>רכש · ${esc(D.roleLabel(u.role))}</span></div></div>
         <nav class="tabs" id="tabs" role="tablist" aria-label="לשוניות"></nav>
         <div class="top-actions">
           <button class="icon-btn theme-btn" id="themeBtn" type="button" aria-label="מצב כהה / בהיר" title="מצב כהה / בהיר">${icon(Theme.current() === 'dark' ? 'sun' : 'moon', 18)}</button>
+          <button class="icon-btn theme-btn" id="installBtn" type="button" hidden aria-label="התקנה כאפליקציה" title="התקנה כאפליקציה במחשב">${icon('download', 18)}</button>
           <button class="sync-pill" id="syncPill" type="button" title="סנכרון"></button>
           <button class="user-btn" id="userBtn" type="button"><span class="avatar">${esc((u.first[0] || '') + (u.last[0] || ''))}</span><span class="uname">${esc(u.first + ' ' + u.last)}</span>${icon('chevron', 14)}</button>
         </div>
@@ -274,6 +410,11 @@
     updateSync();
     bindDrop();
     if (Store.remoteReady) setTimeout(checkRemoteSetup, 900);
+    $('#installBtn').addEventListener('click', () => PWA.install()); PWA.sync();
+    D.ensureMapping();
+    ensureRole();
+    Notifier.start();
+    if (location.hash === '#delayed') { history.replaceState(null, '', location.pathname + location.search); setTimeout(openDelayed, 300); }
   }
   const FIXED = ['home', 'main', 'bom'];
   const DEFAULT_SUB = { home: 'home', main: 'orders', bom: 'bomtable' };
@@ -305,6 +446,7 @@
       if (!FIXED.includes(b.dataset.tab)) b.addEventListener('contextmenu', (e) => { e.preventDefault(); projectMenu(b.dataset.tab, e.clientX, e.clientY); });
     });
     $('#addProject').addEventListener('click', addProjectFlow);
+    if (!D.can('admin')) $('#addProject').hidden = true;
     setTimeout(() => S.newTabs.clear(), 1200);
     const on = el.querySelector('.tab.on'); on && on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
@@ -322,6 +464,7 @@
     } catch (e) { UI.toast(e.message, 'error'); }
   }
   function projectMenu(pid, x, y) {
+    if (!D.can('admin')) return;
     const p = Store.projects().find((q) => q.id === pid); if (!p) return;
     UI.menu(x, y, [
       { title: p.name },
@@ -341,12 +484,12 @@
     Store.commit(); renderTabs();
   }
   async function renameProject(p) {
-    const name = await UI.prompt('שינוי שם פרויקט', 'שם חדש ללשונית. השם יתעדכן גם בכל ההזמנות של הפרויקט, והוא גם הסיסמה של הלשונית.', p.name);
+    const name = await UI.prompt('שינוי שם פרויקט', 'שם חדש ללשונית. השם יתעדכן גם בכל ההזמנות של הפרויקט.', p.name);
     if (!name || name === p.name) return;
     if (Store.projects().some((q) => q !== p && D.norm(q.name) === D.norm(name))) return UI.toast('כבר קיים פרויקט בשם הזה.', 'error');
     const n = D.renameProject(p, name);
     renderTabs(); renderMain();
-    UI.toast(`שם הפרויקט עודכן${n ? ` ב-${n} הזמנות` : ''}. הסיסמה של הלשונית היא עכשיו השם החדש.`, 'ok', 4500);
+    UI.toast(`שם הפרויקט עודכן${n ? ` ב-${n} הזמנות` : ''}.`, 'ok', 4500);
   }
   /** אחרי כל שינוי בהזמנות: יישור הלשוניות לעמודת הפרויקט */
   function afterOrdersChange() {
@@ -364,18 +507,96 @@
   function userMenu(btn) {
     const r = btn.getBoundingClientRect();
     const u = Store.currentUser();
+    const mgr = u.role === 'manager';
+    const gh = Store.cfg.mode === 'github';
     UI.menu(r.right, r.bottom + 6, [
-      { title: `${u.first} ${u.last}` },
-      Store.cfg.mode === 'github' ? { label: 'קוד צוות להרשמת עורכים…', icon: 'lock', action: () => teamCodeDialog(false) } : null,
-      Store.cfg.mode === 'github' ? { label: 'קישור חיבור למכשיר נוסף', icon: 'link', action: shareLink } : { label: 'חיבור לגיטהאב (סנכרון בין מכשירים)', icon: 'cloud', action: () => renderSetup() },
-      { label: 'עורכים רשומים', icon: 'user', action: usersDialog },
-      { label: 'גיבוי נתונים (JSON)', icon: 'download', action: () => download(new Blob([Store.exportJson()], { type: 'application/json' }), `procurement-backup-${D.today()}.json`) },
-      { label: 'שחזור ממגיבוי…', icon: 'upload', action: () => pickFile('.json', async (f) => { Store.importJson(await f.text()); renderTabs(); renderMain(); UI.toast('הגיבוי מוזג לנתונים', 'ok'); }) },
-      Store.cfg.mode === 'github' ? { label: 'הגדרות חיבור', icon: 'settings', action: () => renderSetup() } : null,
-      { label: `גרסה ${window.APP_VERSION || ''} · רענון`, icon: 'refresh', action: () => location.reload() },
+      { title: `${u.first} ${u.last} · ${D.roleLabel(u.role)}` },
+      { label: 'הגדרות אישיות והתראות…', icon: 'settings', action: personalDialog },
+      PWA.canInstall() ? { label: 'התקנה כאפליקציה במחשב', icon: 'download', action: () => PWA.install() } : { label: 'התקנה כאפליקציה במחשב…', icon: 'download', action: () => PWA.install() },
+      mgr ? { sep: true } : null,
+      mgr ? { title: 'ניהול' } : null,
+      mgr ? { label: 'משתמשים ותפקידים…', icon: 'user', action: usersDialog } : { label: 'עורכים רשומים', icon: 'user', action: usersDialog },
+      mgr ? { label: 'הרשאות עריכה לפי תפקיד…', icon: 'lock', action: permsDialog } : null,
+      mgr && gh ? { label: 'קוד צוות להרשמת עורכים…', icon: 'lock', action: () => teamCodeDialog(false) } : null,
+      mgr && gh ? { label: 'קישור חיבור למכשיר נוסף', icon: 'link', action: shareLink } : null,
+      mgr ? { label: 'הגדרות סנכרון', icon: 'cloud', action: () => renderSetup() } : null,
+      mgr ? { label: 'גיבוי נתונים (JSON)', icon: 'download', action: () => download(new Blob([Store.exportJson()], { type: 'application/json' }), `procurement-backup-${D.today()}.json`) } : null,
+      mgr ? { label: 'שחזור מגיבוי…', icon: 'upload', action: () => pickFile('.json', async (f) => { Store.importJson(await f.text()); renderTabs(); renderMain(); UI.toast('הגיבוי מוזג לנתונים', 'ok'); }) } : null,
       { sep: true },
+      { label: `גרסה ${window.APP_VERSION || ''} · רענון`, icon: 'refresh', action: () => location.reload() },
       { label: 'יציאה', icon: 'logout', action: () => { Store.logout(); renderAuth('login'); } },
     ]);
+  }
+  function usersDialog() {
+    const me = Store.currentUser();
+    const mgr = me.role === 'manager';
+    const users = Store.db.users.filter((u) => !u.deleted).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    const body = document.createElement('div');
+    body.innerHTML = `${mgr ? '<p class="muted">שינוי תפקיד נכנס לתוקף מיד בכל המכשירים.</p>' : ''}
+      <table class="mini-table users-t"><thead><tr><th>שם</th><th>תפקיד</th><th>נרשם</th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.first + ' ' + u.last)}${u.id === me.id ? ' <em class="muted">(אני)</em>' : ''}</td>
+        <td>${mgr && u.id !== me.id ? `<select data-u="${u.id}">${D.USER_ROLES.map((r) => `<option value="${r.key}" ${u.role === r.key ? 'selected' : ''}>${r.label}</option>`).join('')}${u.role ? '' : '<option value="" selected>ללא תפקיד</option>'}</select>` : esc(D.roleLabel(u.role))}</td>
+        <td>${new Date(u.createdAt).toLocaleDateString('he-IL')}</td></tr>`).join('')}</tbody></table>`;
+    UI.modal({
+      title: mgr ? 'משתמשים ותפקידים' : 'עורכים רשומים', body, wide: mgr,
+      actions: mgr ? [{ label: 'ביטול' }, { label: 'שמירה', primary: true, icon: 'check', action: () => {
+        body.querySelectorAll('select[data-u]').forEach((sel) => { const u = users.find((x) => x.id === sel.dataset.u); if (u && sel.value && u.role !== sel.value) Store.updateUser(u.id, { role: sel.value }); });
+        renderMain(false); UI.toast('התפקידים עודכנו', 'ok');
+      } }] : [{ label: 'סגירה' }],
+    });
+  }
+  /** מנהל רכש קובע לכל תפקיד: אילו עמודות מותר לערוך ואילו פעולות */
+  function permsDialog() {
+    const cols = Store.columns('orders');
+    const roles = D.USER_ROLES.filter((r) => r.key !== 'manager');
+    const body = document.createElement('div');
+    body.className = 'perms-dlg';
+    const cell = (r, c) => { const set = D.editableCols(r.key); return `<td><input type="checkbox" data-r="${r.key}" data-c="${c.id}" ${!set || set.has(c.id) ? 'checked' : ''} aria-label="${esc(r.label)} · ${esc(c.name)}"></td>`; };
+    body.innerHTML = `<p class="muted">סמן אילו עמודות כל תפקיד יכול לערוך. מנהל רכש תמיד עורך הכול. ${D.perms('buyer').own ? 'קניין יכול לערוך את כל העמודות בהזמנות שהוא עצמו הוסיף.' : ''}</p>
+      <div class="table-wrap"><table class="mini-table perms-t"><thead><tr><th>עמודה</th>${roles.map((r) => `<th>${r.label}</th>`).join('')}</tr></thead><tbody>
+      ${cols.map((c) => `<tr><td>${esc(c.name)}${D.roleOf(c.id) ? ` <em class="muted">· ${esc(D.roleOf(c.id))}</em>` : ''}</td>${roles.map((r) => cell(r, c)).join('')}</tr>`).join('')}
+      <tr class="sep"><td colspan="${roles.length + 1}">פעולות</td></tr>
+      ${D.CAPS.map(([k, l]) => `<tr><td>${l}</td>${roles.map((r) => `<td><input type="checkbox" data-r="${r.key}" data-cap="${k}" ${D.perms(r.key)[k] ? 'checked' : ''}></td>`).join('')}</tr>`).join('')}
+      <tr><td>קניין: עריכה מלאה של הזמנות שהוסיף</td>${roles.map((r) => `<td>${r.key === 'buyer' ? `<input type="checkbox" data-r="buyer" data-cap="own" ${D.perms('buyer').own ? 'checked' : ''}>` : ''}</td>`).join('')}</tr>
+      </tbody></table></div>`;
+    UI.modal({
+      title: 'הרשאות עריכה לפי תפקיד', body, wide: true,
+      actions: [
+        { label: 'החזרה לברירת מחדל', action: () => { Store.db.settings.perms = {}; Store.db.settings.updatedAt = Store.now(); Store.commit(); renderMain(false); UI.toast('ההרשאות הוחזרו לברירת המחדל', 'ok'); } },
+        { label: 'שמירה', primary: true, icon: 'check', action: () => {
+          const perms = {};
+          for (const r of roles) {
+            const colsOn = [...body.querySelectorAll(`[data-r="${r.key}"][data-c]`)];
+            const p = { cols: colsOn.every((x) => x.checked) ? 'all' : colsOn.filter((x) => x.checked).map((x) => x.dataset.c) };
+            body.querySelectorAll(`[data-r="${r.key}"][data-cap]`).forEach((x) => (p[x.dataset.cap] = x.checked));
+            perms[r.key] = p;
+          }
+          Store.db.settings.perms = perms; Store.db.settings.updatedAt = Store.now(); Store.commit();
+          renderMain(false); UI.toast('ההרשאות נשמרו ונכנסות לתוקף בכל המכשירים', 'ok');
+        } },
+      ],
+    });
+  }
+  function personalDialog() {
+    const u = Store.currentUser();
+    const body = document.createElement('div');
+    body.innerHTML = `<p class="muted">התפקיד שלך: <b>${esc(D.roleLabel(u.role))}</b></p>${notifyFields(u.notify)}
+      <p class="muted sm-note" data-perm></p>`;
+    const permEl = body.querySelector('[data-perm]');
+    const showPerm = () => { permEl.textContent = !('Notification' in window) ? 'הדפדפן הזה לא תומך בהתראות.' : Notification.permission === 'granted' ? 'התראות מאושרות במכשיר הזה.' : Notification.permission === 'denied' ? 'ההתראות חסומות בדפדפן. אפשר לאשר אותן בהגדרות האתר (סמל המנעול ליד הכתובת).' : 'בשמירה הדפדפן יבקש אישור להציג התראות.'; };
+    showPerm();
+    UI.modal({
+      title: 'הגדרות אישיות', body, wide: false,
+      actions: [
+        { label: 'שליחת התראת בדיקה', icon: 'alert', action: async () => { await Notifier.permit(); await Notifier.check(true); showPerm(); return false; } },
+        { label: 'שמירה', primary: true, icon: 'check', action: async () => {
+          const n = readNotify(body);
+          Store.updateUser(u.id, { notify: n });
+          if (n.on) await Notifier.permit();
+          Notifier.start();
+          UI.toast(n.on ? `התזכורת נקבעה: ${n.days.map((d) => DAYS[d]).join(', ')} בין ${n.from} ל-${n.to}` : 'התזכורת היומית כבויה', 'ok', 5000);
+        } },
+      ],
+    });
   }
   function shareLink() {
     const c = Store.cfg;
@@ -388,20 +609,13 @@
       actions: [{ label: 'סגירה' }, { label: 'העתקת הקישור', primary: true, icon: 'copy', action: async () => { await navigator.clipboard.writeText(link); UI.toast('הקישור הועתק', 'ok'); } }],
     });
   }
-  function usersDialog() {
-    const users = Store.db.users.filter((u) => !u.deleted);
-    UI.modal({
-      title: 'עורכים רשומים',
-      body: `<table class="mini-table"><thead><tr><th>שם</th><th>נרשם</th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.first + ' ' + u.last)}</td><td>${new Date(u.createdAt).toLocaleDateString('he-IL')}</td></tr>`).join('')}</tbody></table>`,
-      actions: [{ label: 'סגירה' }],
-    });
-  }
+
 
   /* ================= סנכרון ================= */
   function updateSync() {
     const el = $('#syncPill'); if (!el) return;
     const s = Store.status;
-    const map = { synced: ['cloud', 'מסונכרן'], saving: ['refresh', 'שומר…'], offline: ['cloudOff', 'לא מקוון'], error: ['alert', 'שגיאת סנכרון'], local: ['box', 'שמירה מקומית'], idle: ['cloud', ''] };
+    const map = { synced: ['cloud', 'מסונכרן'], saving: ['refresh', 'שומר…'], offline: ['cloudOff', 'לא מקוון'], error: ['alert', 'שגיאת סנכרון'], local: ['check', 'נשמר'], idle: ['cloud', ''] };
     const [ic, txt] = map[s.status] || map.idle;
     el.className = 'sync-pill s-' + s.status;
     document.body.classList.toggle('syncing', s.status === 'saving');
@@ -419,7 +633,7 @@
     D.syncProjects();
     renderTabs();
     if (!FIXED.includes(S.route.tab) && !currentProject()) return go('home');
-    if (S.grid && isGridView()) { S.grid.refresh(true, true); if (S.route.sub === 'bom' || S.route.sub === 'bomtable') renderBomSummary(); }
+    if (S.grid && isGridView()) { S.grid.refresh(true, true); renderQuick(); if (S.route.sub === 'bom' || S.route.sub === 'bomtable') renderBomSummary(); }
     else renderMain(false);
   }
 
@@ -463,7 +677,7 @@
   function renderLock(main, p) {
     main.innerHTML = `<div class="lock-screen"><form class="card form-card narrow" id="lockForm">
       <div class="lock-ic" style="--pc:${p.color}">${icon('lock', 26)}</div>
-      <h1>${esc(p.name)}</h1><p class="muted">הלשונית מוגנת. הסיסמה היא שם הפרויקט.</p>
+      <h1>${esc(p.name)}</h1><p class="muted">הלשונית מוגנת בסיסמה.</p>
       <label class="field"><span>סיסמת הלשונית</span><input type="password" name="pw" required autocomplete="off"></label>
       <div class="form-actions"><button class="btn btn-primary" type="submit">${icon('lock', 16)}<span>פתיחת הלשונית</span></button></div>
       <p class="form-msg err" role="alert"></p></form></div>`;
@@ -471,7 +685,7 @@
     setTimeout(() => f.pw.focus(), 50);
     f.addEventListener('submit', (e) => {
       e.preventDefault();
-      if (D.norm(f.pw.value) === D.norm(p.name)) { Store.unlock(p.id); renderTabs(); renderMain(); }
+      if (D.norm(f.pw.value) === D.norm(D.TAB_PASSWORD)) { Store.unlock(p.id); renderTabs(); renderMain(); }
       else { $('.form-msg', f).textContent = 'הסיסמה שגויה.'; f.pw.select(); f.classList.remove('shake'); void f.offsetWidth; f.classList.add('shake'); }
     });
     setStatus('');
@@ -502,6 +716,7 @@
         </div>
         <div class="chips" id="chips"></div>
       </div>
+      <div class="quick" id="quick" role="toolbar" aria-label="סינון מהיר לפי מצב"></div>
       <div class="grid-area" id="gridArea"></div>`;
     const area = $('#gridArea');
     if (!hasCols) {
@@ -520,15 +735,21 @@
       filter: (row) => (!p || D.inProject(row, p)) && (!S.catFilter || catMatch(row, S.catFilter)),
       defaults: () => (p && m.project ? { [m.project]: p.name } : {}),
       colRole: (id) => D.roleOf(id),
+      readOnly: (col, row) => !D.canEditCell(col, row),
+      colLocked: (col) => !D.canEditCell(col, null),
+      canAdd: () => D.can('add'), canDel: () => D.can('del'), canAdmin: () => D.can('admin'),
       decorate: decorateOrder(p),
       onStats: (s) => setStatus(statsText(s)),
-      onChange: afterOrdersChange,
+      onChange: () => { afterOrdersChange(); renderQuick(); },
       onFilter: () => renderChips(),
       columnMenuExtra: (col) => [{ label: 'תפקיד העמודה…', icon: 'link', action: () => columnsDialog(col.id) }],
       emptyHtml: p
         ? `<div><b>אין עדיין הזמנות בפרויקט ${esc(p.name)}</b><p>${m.project ? `שורות שבעמודת "${esc(colName(m.project))}" כתוב בהן "${esc(p.name)}" יופיעו כאן אוטומטית. אפשר גם להוסיף שורה חדשה.` : 'עוד לא הוגדרה עמודת פרויקט. פתח "עמודות" וסמן איזו עמודה מציינת את הפרויקט.'}</p></div>`
         : '<div><b>אין הזמנות</b><p>הוסף שורה או ייבא קובץ אקסל.</p></div>',
     });
+    applyCaps({ addRow: 'add', imp: 'import', del: 'del', colsBtn: 'admin', statusBtn: 'admin' });
+    S.quickProject = p;
+    renderQuick();
     S.grid = g;
     $('#q').addEventListener('input', debounce((e) => g.setSearch(e.target.value), 180));
     $('#addRow').onclick = () => { g.appendRows(1); g.focus(); };
@@ -562,6 +783,16 @@
     return c === f;
   }
   const CF_LABEL = { notDone: 'פתוחות', supplied: 'סופקו', closed: 'סגורות', delayed: 'בעיכוב / דורש טיפול', new: 'חדשות', open: 'פתוחות בזמן', all: 'הכול' };
+  /** סרגל סינון מהיר לפי מצב ההזמנה, עם ספירה חיה */
+  function renderQuick() {
+    const el = $('#quick'); if (!el) return;
+    const p = S.quickProject;
+    const rows = p ? D.projectRows(p) : Store.rows('orders');
+    const s = D.stats(rows, S.newDays);
+    const items = [[null, 'הכול', s.total, ''], ['notDone', 'פתוחות', s.notDone, 'open'], ['delayed', 'בעיכוב', s.delayed, 'delayed'], ['supplied', 'סופקו', s.supplied, 'supplied'], ['closed', 'סגורות', s.closed, 'closed'], ['new', `חדשות (${S.newDays} ימים)`, s.newer, '']];
+    el.innerHTML = items.map(([k, l, n, c]) => `<button type="button" class="qf${(S.catFilter || null) === k ? ' on' : ''}" data-q="${k || ''}">${c ? `<i class="sw c-${c}"></i>` : ''}<span>${l}</span><b>${fmtN(n)}</b></button>`).join('');
+    el.querySelectorAll('[data-q]').forEach((b) => (b.onclick = () => { S.catFilter = b.dataset.q || null; S.grid && S.grid.refresh(); renderChips(); renderQuick(); }));
+  }
   function renderChips() {
     const el = $('#chips'); if (!el || !S.grid) return;
     const g = S.grid; let h = '';
@@ -569,7 +800,7 @@
     for (const cid of Object.keys(g.filters)) { const c = g.allCols.find((x) => x.id === cid); if (c) h += `<button class="fchip" data-f="${cid}">${icon('filter', 12)} ${esc(c.name)} ${icon('x', 12)}</button>`; }
     if (g.sort) { const c = g.allCols.find((x) => x.id === g.sort.colId); if (c) h += `<button class="fchip" data-s>${icon(g.sort.dir > 0 ? 'sortAsc' : 'sortDesc', 12)} ${esc(c.name)} ${icon('x', 12)}</button>`; }
     el.innerHTML = h;
-    el.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => { S.catFilter = null; g.refresh(); renderChips(); }));
+    el.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => { S.catFilter = null; g.refresh(); renderChips(); renderQuick(); }));
     el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => { delete g.filters[b.dataset.f]; g.refresh(); renderChips(); }));
     el.querySelectorAll('[data-s]').forEach((b) => (b.onclick = () => { g.setSort(null, 0); renderChips(); }));
   }
@@ -724,18 +955,31 @@
     for (let r = hr + 1; r < Math.min(sh.rows.length, hr + 200); r++) width = Math.max(width, (sh.rows[r] || []).length);
     return Array.from({ length: width }, (_, i) => String(head[i] ?? '').trim() || `עמודה ${i + 1}`);
   }
+  /**
+   * שורת הכותרות: השורה הראשונה (מתוך 20) שכל התאים בה טקסט, בלי כפילויות,
+   * ומכסה לפחות 60% מרוחב הטבלה. כך שורת כותרת עליונה (כמו שם הדוח) לא נבחרת בטעות,
+   * וגם שורת נתונים עם הרבה טקסט לא "גונבת" את מקום הכותרות.
+   */
   function detectHeader(rows) {
-    let best = 0, bestN = -1;
-    for (let i = 0; i < Math.min(rows.length, 20); i++) {
-      const r = rows[i] || [];
-      const n = r.filter((v) => typeof v === 'string' && v.trim()).length;
-      if (n > bestN) { bestN = n; best = i; }
+    const N = Math.min(rows.length, 20);
+    let width = 0;
+    for (let i = 0; i < Math.min(rows.length, 60); i++) width = Math.max(width, (rows[i] || []).filter((v) => v !== '' && v != null).length);
+    for (let i = 0; i < N; i++) {
+      const vals = (rows[i] || []).filter((v) => v !== '' && v != null);
+      if (vals.length < Math.max(2, Math.ceil(width * 0.6))) continue;
+      const allText = vals.every((v) => typeof v === 'string' && !/^\d{4}-\d{2}-\d{2}$/.test(v) && isNaN(+v));
+      const unique = new Set(vals.map((v) => D.norm(v))).size === vals.length;
+      if (allText && unique) return i;
     }
+    let best = 0, bestN = -1;
+    for (let i = 0; i < N; i++) { const n = (rows[i] || []).filter((v) => typeof v === 'string' && v.trim()).length; if (n > bestN) { bestN = n; best = i; } }
     return best;
   }
+
   function importDialog(ds, p, fname, sheets) {
     const isBom = ds === 'bom';
-    let si = 0;
+    // ברירת מחדל: הגיליון עם הכי הרבה נתונים
+    let si = sheets.reduce((bi, sh, i) => (sh.rows.length > sheets[bi].rows.length ? i : bi), 0);
     const body = document.createElement('div');
     body.className = 'import-dlg';
     const existing = Store.rows('orders').length;
@@ -792,7 +1036,8 @@
           const mode = $('[data-mode]', body).value;
           const keys = [...($('[data-key]', body)?.selectedOptions || [])].map((o) => +o.value);
           if (mode === 'upsert' && !keys.length) throw new Error('בחר לפחות עמודת מפתח אחת.');
-          setTimeout(() => importOrders(headers, data, mode, keys, p).catch((e) => UI.toast(e.message, 'error', 6000)), 0);
+          const rawCount = Math.max(0, sh.rows.length - hr - 1);
+          setTimeout(() => importOrders(headers, data, mode, keys, p, rawCount).catch((e) => UI.toast(e.message, 'error', 6000)), 0);
         }
       } }],
     });
@@ -811,12 +1056,12 @@
     values.slice(0, 200).forEach((v) => { w = Math.max(w, String(v ?? '').length * 7.4 + 24); });
     return Math.round(Math.max(80, Math.min(300, w)));
   }
-  async function importOrders(headers, data, mode, keyIdx, p) {
+  async function importOrders(headers, data, mode, keyIdx, p, rawCount = data.length) {
     const prog = UI.progress(`מייבא ${fmtN(data.length)} שורות`);
-    try { await importOrdersRun(headers, data, mode, keyIdx, p, prog); }
+    try { await importOrdersRun(headers, data, mode, keyIdx, p, prog, rawCount); }
     catch (e) { prog.fail(); throw e; }
   }
-  async function importOrdersRun(headers, data, mode, keyIdx, p, prog) {
+  async function importOrdersRun(headers, data, mode, keyIdx, p, prog, rawCount) {
     prog.set(0.02, 'מתאים עמודות');
     await UI.yieldUI();
     const dsObj = Store.db.datasets.orders;
@@ -845,13 +1090,15 @@
     if (mode === 'replace') for (const r of Store.rows('orders')) { r.deleted = true; Store.touch(r); }
     keyIdx = keyIdx.filter((i) => colFor[i]);
     const keyOf = (vals) => keyIdx.map((i) => D.norm(vals(i))).join('¦');
+    // לכל מפתח — תור של שורות קיימות, כך ששורות עם אותו מפתח (למשל כמה מק"טים באותה הזמנה) לא מתמזגות
     const index = new Map();
-    if (mode === 'upsert') for (const r of Store.rows('orders')) { const k = keyOf((i) => r.c[colFor[i].id]); if (k.replace(/¦/g, '')) index.set(k, r); }
+    if (mode === 'upsert') for (const r of Store.rows('orders').sort((a, b) => (a.o || 0) - (b.o || 0))) { const k = keyOf((i) => r.c[colFor[i].id]); if (!k.replace(/¦/g, '')) continue; if (!index.has(k)) index.set(k, []); index.get(k).push(r); }
     prog.set(0.06, 'קולט שורות');
     let n = 0;
     for (const line of data) {
       if (++n % 1000 === 0) { prog.set(0.06 + 0.74 * (n / data.length), 'קולט שורות', `${fmtN(n)} מתוך ${fmtN(data.length)}`); await UI.yieldUI(); }
-      let row = mode === 'upsert' ? index.get(keyOf((i) => line[i])) : null;
+      let row = null;
+      if (mode === 'upsert') { const q = index.get(keyOf((i) => line[i])); if (q && q.length) row = q.shift(); }
       if (row) {
         let changed = false;
         colFor.forEach((c, i) => { if (!c) return; const v = convert(c, line[i]); if ((row.c[c.id] ?? '') !== v) { row.c[c.id] = v; changed = true; } });
@@ -861,9 +1108,11 @@
         if (firstImport || mode === 'replace') row.imp = 1;
         colFor.forEach((c, i) => { if (c) row.c[c.id] = convert(c, line[i]); });
         if (p && m.project && !row.c[m.project]) row.c[m.project] = p.name;
+        row.createdBy = Store.currentUser() && Store.currentUser().id;
         Store.touch(row); dsObj.rows.push(row); created++;
       }
     }
+    const skipped = rawCount - data.length;
     prog.set(0.82, 'בונה לשוניות פרויקט', `${fmtN(data.length)} שורות`);
     await UI.yieldUI();
     Store.commit();
@@ -877,8 +1126,13 @@
     prog.set(0.97, 'מציג את הטבלה');
     await UI.yieldUI();
     renderTabs(); renderMain();
-    await prog.done(`הייבוא הושלם · ${fmtN(created)} חדשות${updated ? ` · ${fmtN(updated)} עודכנו` : ''}`);
-    UI.toast(`ייבוא הושלם: ${fmtN(created)} שורות חדשות${updated ? `, ${fmtN(updated)} עודכנו` : ''}${Store.cfg.mode === 'github' ? ' · מסונכרן לגיטהאב ברקע' : ''}`, 'ok', 4500);
+    await prog.done(`נקלטו ${fmtN(data.length)} שורות מתוך הקובץ`);
+    UI.modal({
+      title: 'הייבוא הושלם',
+      body: `<div class="imp-sum"><div><b>${fmtN(data.length)}</b><span>שורות נתונים בקובץ</span></div><div><b>${fmtN(created)}</b><span>הזמנות חדשות</span></div><div><b>${fmtN(updated)}</b><span>עודכנו</span></div><div><b>${fmtN(data.length - created - updated)}</b><span>ללא שינוי</span></div></div>
+        ${skipped ? `<p class="muted">${fmtN(skipped)} שורות ריקות לגמרי בקובץ דולגו.</p>` : ''}<p class="muted">סה"כ בטבלה עכשיו: ${fmtN(Store.rows('orders').length)} הזמנות.</p>`,
+      actions: [{ label: 'סגירה', primary: true }],
+    });
   }
   /**
    * ייבוא טבלת BOM: עמודות התפקיד (פרויקט, מכלול, מק"ט, תיאור, כמות) נכנסות לעמודות הקבועות,
@@ -1023,7 +1277,7 @@
           ${supplierBars(rows)}
         </section>
       </div>`;
-    v.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => { S.route.sub = 'orders'; sessionStorage.setItem('pt.route', JSON.stringify(S.route)); renderMain(); S.catFilter = b.dataset.cf === 'all' ? null : b.dataset.cf; S.grid && (S.grid.refresh(), renderChips()); }));
+    v.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => { S.route.sub = 'orders'; sessionStorage.setItem('pt.route', JSON.stringify(S.route)); renderMain(); S.catFilter = b.dataset.cf === 'all' ? null : b.dataset.cf; S.grid && (S.grid.refresh(), renderChips(), renderQuick()); }));
     v.querySelectorAll('[data-nd]').forEach((b) => (b.onclick = () => { S.newDays = +b.dataset.nd; renderMain(false); }));
     v.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => go(p.id, b.dataset.go)));
     v.querySelectorAll('[data-asm]').forEach((b) => (b.onclick = () => asmDialog(bp, b.dataset.asm)));
@@ -1146,6 +1400,8 @@
       dataset: 'bom', label: p ? 'BOM ' + p.name : 'BOM', rowHeight,
       filter: p ? (r) => inBomP(r, p) : null,
       defaults: () => (p ? { [bm.project]: p.name } : {}),
+      readOnly: () => !D.can('bom'), colLocked: () => !D.can('bom'),
+      canAdd: () => D.can('bom'), canDel: () => D.can('bom'), canAdmin: () => D.can('admin'),
       virtualCols: () => { cache = null; return virt; },
       colRole: bomRoleOf,
       decorate: (row, col, val, txt) => {
@@ -1160,6 +1416,7 @@
       columnMenuExtra: (col) => [{ label: 'תפקיד העמודה…', icon: 'link', action: () => columnsDialog(col.id, 'bom') }],
       emptyHtml: `<div><b>אין עדיין BOM${p ? ' ל-' + esc(p.name) : ''}</b><p>ייבא את קובץ ה-BOM בכפתור "ייבוא BOM" או בגרירה לחלון. כל שורה צריכה מכלול, מק"ט וכמות${p ? '' : ', ועמודת פרויקט (או שתבחר פרויקט בייבוא)'}.</p></div>`,
     });
+    applyCaps({ addRow: 'bom', imp: 'import', del: 'bom', bulk: 'bom', colsBtn: 'admin' });
     S.grid = g;
     $('#q').addEventListener('input', debounce((e) => g.setSearch(e.target.value), 180));
     $('#addRow').onclick = () => { g.appendRows(1); g.focus(); };
@@ -1212,7 +1469,7 @@
   function bindKpiToOrders(v, tab) {
     v.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => {
       S.route = { tab, sub: 'orders' }; sessionStorage.setItem('pt.route', JSON.stringify(S.route));
-      renderTabs(); renderMain(); S.catFilter = b.dataset.cf === 'all' ? null : b.dataset.cf; S.grid && (S.grid.refresh(), renderChips());
+      renderTabs(); renderMain(); S.catFilter = b.dataset.cf === 'all' ? null : b.dataset.cf; S.grid && (S.grid.refresh(), renderChips(), renderQuick());
     }));
   }
   const ordersKpis = (s) => [
@@ -1248,7 +1505,9 @@
       <div class="ob-card ${Store.rows('orders').length ? 'ok' : ''}"><span class="ob-n">${Store.rows('orders').length ? icon('check', 18) : '1'}</span><b>טבלת ההזמנות</b><p>כל ההזמנות, המק"טים והסטטוס שלהן. ממנה נפתחות לשוניות הפרויקטים.</p><button class="btn btn-primary" data-imp="orders">${icon('upload', 16)}<span>${Store.rows('orders').length ? 'עדכון מקובץ' : 'ייבוא הזמנות'}</span></button></div>
       <div class="ob-card ${Store.rows('bom').length ? 'ok' : ''}"><span class="ob-n">${Store.rows('bom').length ? icon('check', 18) : '2'}</span><b>טבלת ה-BOM</b><p>מכלולים והמק"טים שמרכיבים אותם. ממנה מחושב אחוז ההשלמה של כל מכלול.</p><button class="btn ${Store.rows('bom').length ? 'btn-soft' : 'btn-primary'}" data-imp="bom">${icon('upload', 16)}<span>${Store.rows('bom').length ? 'עדכון מקובץ' : 'ייבוא BOM'}</span></button></div>
     </div>`;
-  function bindOnboard(v) { v.querySelectorAll('[data-imp]').forEach((b) => (b.onclick = () => importFlow(b.dataset.imp, null))); }
+  function bindOnboard(v) {
+    v.querySelectorAll('[data-imp]').forEach((b) => { if (!D.can('import')) { b.disabled = true; b.title = 'רק מנהל רכש יכול לייבא קבצים'; } b.onclick = () => importFlow(b.dataset.imp, null); });
+  }
 
   /* ================= דשבורד הזמנות (כללי) ================= */
   function renderOrdersDash(v) {
@@ -1347,6 +1606,8 @@
   }
 
   /* ================= עזרים ================= */
+  /** מסתיר כפתורים שהתפקיד הנוכחי לא מורשה להם */
+  function applyCaps(map) { for (const [id, cap] of Object.entries(map)) { const el = document.getElementById(id); if (el && !D.can(cap)) el.hidden = true; } }
   const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   /** מונים שעולים מ-0 לערך — רק בכניסה לתצוגה */
   function countUp(root, anim) {
@@ -1385,7 +1646,7 @@
     let depth = 0;
     const hasFiles = (e) => e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
     const zone = () => $('#dropZone');
-    const canImport = () => { const p = currentProject(); return Store.currentUser() && $('#main') && (!p || Store.isUnlocked(p.id)); };
+    const canImport = () => { const p = currentProject(); return Store.currentUser() && D.can('import') && $('#main') && (!p || Store.isUnlocked(p.id)); };
     document.addEventListener('dragenter', (e) => { if (!hasFiles(e) || !canImport()) return; depth++; const z = zone(); if (z) { z.hidden = false; requestAnimationFrame(() => z.classList.add('in')); } });
     document.addEventListener('dragleave', (e) => { if (!hasFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) { const z = zone(); z && (z.classList.remove('in'), (z.hidden = true)); } });
     document.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });

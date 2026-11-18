@@ -204,7 +204,7 @@
       try { await IDB.set('db', state.db); localStorage.removeItem(LS_DB); channel && channel.postMessage('db'); }
       catch (e) {
         console.warn('IDB failed, falling back to localStorage', e);
-        try { localStorage.setItem(LS_DB, JSON.stringify(state.db)); } catch (e2) { emit('status', { status: 'error', message: 'אין מקום לשמירה מקומית בדפדפן. חבר את המערכת לגיטהאב כדי לשמור את הנתונים.' }); }
+        try { localStorage.setItem(LS_DB, JSON.stringify(state.db)); } catch (e2) { emit('status', { status: 'error', message: 'אין מקום לשמירה במכשיר. פנה למנהל המערכת.' }); }
       }
     };
     if (now) return run();
@@ -266,11 +266,11 @@
     let msg = '';
     try { msg = (await res.json()).message; } catch { }
     const map = {
-      401: 'הטוקן של גיטהאב לא תקין או שפג תוקפו. עדכן אותו בהגדרות החיבור.',
-      403: 'אין לטוקן הרשאת כתיבה למאגר, או שנחסמת זמנית. בדוק הרשאות Contents: Read and write.',
-      404: 'המאגר או הענף לא נמצאו. בדוק את שם המשתמש, שם המאגר והענף.',
+      401: 'הרשאת הסנכרון אינה תקינה או שפג תוקפה. פנה למנהל המערכת.',
+      403: 'אין הרשאה לשמור נתונים. פנה למנהל המערכת.',
+      404: 'מאגר הנתונים לא נמצא. פנה למנהל המערכת.',
     };
-    const e = new Error(map[res.status] || `שגיאת גיטהאב ${res.status}: ${msg}`);
+    const e = new Error(map[res.status] || `שגיאת סנכרון ${res.status}: ${msg}`);
     e.status = res.status;
     return e;
   }
@@ -308,7 +308,7 @@
 
   async function syncNow() {
     if (!state.cfg) return;
-    if (state.cfg.mode === 'local') { await cacheLocal(true); setStatus('local', 'שמירה מקומית בדפדפן'); return; }
+    if (state.cfg.mode === 'local') { await cacheLocal(true); setStatus('local', 'נשמר'); return; }
     if (state.busy) { schedule(800); return; }
     state.busy = true;
     try {
@@ -319,7 +319,7 @@
       setStatus('synced', 'מסונכרן');
     } catch (e) {
       console.error(e);
-      if (!navigator.onLine || e instanceof TypeError) setStatus('offline', 'אין חיבור — השינויים נשמרים מקומית ויישלחו כשהחיבור יחזור');
+      if (!navigator.onLine || e instanceof TypeError) setStatus('offline', 'אין חיבור לאינטרנט — השינויים יישלחו כשהחיבור יחזור');
       else setStatus('error', e.message);
       schedule(8000);
     } finally { state.busy = false; }
@@ -423,7 +423,7 @@
       state.db = await loadLocal();
       if (!state.cfg) return { needsSetup: true };
       if (state.cfg.mode === 'github') {
-        setStatus('saving', 'טוען מגיטהאב…');
+        setStatus('saving', 'טוען…');
         try {
           await pull();
           if (!state.sha) { state.version++; await push(); } // יצירת קובץ נתונים ראשון
@@ -432,7 +432,7 @@
           setStatus(navigator.onLine ? 'error' : 'offline', e.message);
         }
         this.startPolling();
-      } else setStatus('local', 'שמירה מקומית בדפדפן');
+      } else setStatus('local', 'נשמר');
       if (channel) channel.onmessage = async () => {
         if (state.cfg && state.cfg.mode === 'local') { state.db = await loadLocal(); emit('remote'); }
       };
@@ -453,7 +453,7 @@
     async connect(cfg) {
       saveCfg(cfg); state.sha = null; state.etag = null;
       if (cfg.mode === 'github') { await pull(); if (!state.sha) { state.version++; await push(); } this.startPolling(); setStatus('synced', 'מסונכרן'); }
-      else { await cacheLocal(true); setStatus('local', 'שמירה מקומית בדפדפן'); }
+      else { await cacheLocal(true); setStatus('local', 'נשמר'); }
     },
     disconnect() { localStorage.removeItem(LS_CFG); state.cfg = null; clearInterval(state.poller); },
 
@@ -485,14 +485,14 @@
     get session() { try { return JSON.parse(sessionStorage.getItem(LS_SESSION) || localStorage.getItem(LS_SESSION)); } catch { return null; } },
     currentUser() { const s = this.session; return s && state.db.users.find((u) => u.id === s.userId && !u.deleted); },
     userName(id) { const u = state.db.users.find((x) => x.id === id); return u ? `${u.first} ${u.last}` : ''; },
-    register(first, last, pw) {
+    register(first, last, pw, extra = {}) {
       first = first.trim(); last = last.trim();
       if (!first || !last) throw new Error('צריך למלא שם פרטי ושם משפחה.');
       if (pw.length < 8) throw new Error('הסיסמה צריכה להכיל לפחות 8 תווים (היא גם מצפינה את הגישה לנתונים מכל מכשיר).');
       const key = (first + ' ' + last).toLowerCase();
       if (state.db.users.some((u) => !u.deleted && (u.first + ' ' + u.last).toLowerCase() === key)) throw new Error('משתמש בשם הזה כבר רשום. אפשר להתחבר במקום להירשם.');
       const salt = uid();
-      const user = { id: uid(), first, last, salt, hash: hashPassword(pw, salt), createdAt: now(), updatedAt: now() };
+      const user = Object.assign({ id: uid(), first, last, salt, hash: hashPassword(pw, salt), createdAt: now(), updatedAt: now() }, extra);
       state.db.users.push(user);
       this.commit();
       return user;
@@ -508,6 +508,13 @@
       if (remember) localStorage.setItem(LS_SESSION, s); else localStorage.removeItem(LS_SESSION);
       return u;
     },
+    updateUser(id, patch) {
+      const u = state.db.users.find((x) => x.id === id); if (!u) return null;
+      Object.assign(u, patch); u.updatedAt = now(); this.commit(); return u;
+    },
+    /** אחסון מקומי קטן (העדפות התראה, תאריך התראה אחרונה) — משותף גם ל-Service Worker */
+    async kvGet(k) { try { return await IDB.get(k); } catch { return null; } },
+    async kvSet(k, v) { try { await IDB.set(k, v); } catch { } },
     logout() { _suAt = 0; sessionStorage.removeItem(LS_SESSION); localStorage.removeItem(LS_SESSION); sessionStorage.removeItem('pt.unlocked'); },
 
     /* ---------- כניסה מכל מכשיר ---------- */
@@ -530,7 +537,7 @@
       return !!(acc && acc.users.some((x) => x.u === nameKey(user.first, user.last)));
     },
     async setTeamCode(code) {
-      if (!this.remoteReady) throw new Error('צריך קודם לחבר את המערכת לגיטהאב.');
+      if (!this.remoteReady) throw new Error('צריך קודם להפעיל סנכרון.');
       if (code.length < 6) throw new Error('קוד הצוות צריך להכיל לפחות 6 תווים.');
       const team = await seal(state.cfg.token, code);
       await writeAccess((acc) => { acc.data = dataInfo(); acc.team = team; });
@@ -538,7 +545,7 @@
     /** כניסה ממכשיר שעוד לא מחובר: מפענח את הטוקן בעזרת הסיסמה ומתחבר לנתונים */
     async remoteLogin(first, last, password) {
       const acc = await fetchAccess(true);
-      if (!acc) throw new Error('המערכת עוד לא מחוברת לענן. היכנס מהמכשיר הראשי או חבר את המערכת לגיטהאב.');
+      if (!acc) throw new Error('המערכת עוד לא מסונכרנת. היכנס מהמכשיר הראשי.');
       const entry = acc.users.find((x) => x.u === nameKey(first, last));
       if (!entry) throw new Error('לא נמצא משתמש בשם הזה. בדוק את האיות, או הירשם עם קוד הצוות.');
       const token = await unseal(entry, password);
