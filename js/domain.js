@@ -112,6 +112,16 @@
   D.CAT_ORDER = ['open', 'supplied', 'delayed', 'closed']; // הסדר שעבר בדיקת צבעים
 
   const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  /* ---------- פרויקטים מרכזיים: 175, FX, S9 ---------- */
+  // ערך בעמודת הפרויקט שמכיל את אחד הקודים (למשל "PW175", "FX-2", "S9 Phase B") מנותב ללשונית שלו
+  D.CORE_PROJECTS = [
+    { name: '175', re: /(^|[^0-9])175([^0-9]|$)/ },
+    { name: 'FX', re: /(^|[^a-z])fx([^a-z]|$)/i },
+    { name: 'S9', re: /(^|[^a-z0-9])s[\s\-_]?9([^0-9]|$)/i },
+  ];
+  const pk = (v) => { const s = norm(v); if (!s) return s; const c = D.CORE_PROJECTS.find((x) => x.re.test(s)); return c ? norm(c.name) : s; };
+  D.pk = pk;
+  D.isCore = (p) => D.CORE_PROJECTS.some((c) => norm(c.name) === norm(p.name));
   const normPart = (s) => String(s ?? '').trim().toUpperCase().replace(/[\s\-_.]/g, '');
   D.norm = norm; D.normPart = normPart;
 
@@ -178,7 +188,7 @@
   /* ---------- פרויקטים ---------- */
   D.inProject = (row, p) => {
     const m = D.mapping();
-    return !!m.project && norm(row.c[m.project]) === norm(p.name);
+    return !!m.project && pk(row.c[m.project]) === pk(p.name);
   };
   D.projectRows = (p) => Store.rows('orders').filter((r) => D.inProject(r, p));
   D.PROJECT_COLORS = ['#2F5BD3', '#1E8E5A', '#D2551C', '#7E57B0', '#0E7C86', '#B4417A', '#8A6D1F', '#4A5A6E'];
@@ -200,17 +210,24 @@
   let membership = new Map(); // rowId -> projectId (בזיכרון בלבד)
   D.syncProjects = () => {
     const m = D.mapping();
-    if (!m.project) return { changed: false, created: [] };
     const rows = Store.rows('orders');
     const names = new Map(); // norm -> כתיב תצוגה
-    for (const r of rows) { const v = String(r.c[m.project] ?? '').trim(); if (v && !names.has(norm(v))) names.set(norm(v), v); }
+    for (const r of rows) { const v = String(r.c[m.project] ?? '').trim(); if (v && !names.has(pk(v))) names.set(pk(v), v); }
+    for (const c of D.CORE_PROJECTS) if (names.has(pk(c.name))) names.set(pk(c.name), c.name);
     const bpc = D.bomMapping().project;
     const all = Store.db.projects;
     let changed = false; const created = [];
+    // שלוש הלשוניות המרכזיות קיימות תמיד, ראשונות בסדר
+    D.CORE_PROJECTS.forEach((c, i) => {
+      let p = all.find((x) => !x.deleted && pk(x.name) === pk(c.name)) || all.find((x) => pk(x.name) === pk(c.name));
+      if (!p) { p = { id: 'core-' + c.name.toLowerCase(), name: c.name, order: i - 100, color: D.PROJECT_COLORS[i % D.PROJECT_COLORS.length], createdAt: 1, updatedAt: Store.now(), core: true }; all.push(p); changed = true; }
+      else if (p.deleted || !p.core || p.order !== i - 100 || p.name !== c.name) { p.deleted = false; p.core = true; p.order = i - 100; p.name = c.name; Store.touch(p); changed = true; }
+    });
+    if (!m.project) { if (changed) Store.commit(); return { changed, created }; }
     // כפילויות שנוצרו במקביל בשני מכשירים: משאירים את הוותיקה
     const seen = new Map();
     for (const p of all.filter((x) => !x.deleted).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0) || (a.id < b.id ? -1 : 1))) {
-      const k = norm(p.name);
+      const k = pk(p.name);
       if (seen.has(k)) {
         const keep = seen.get(k);
         for (const b of Store.rows('bom')) if (b.p === p.id) { b.p = keep.id; Store.touch(b); }
@@ -218,23 +235,23 @@
       } else seen.set(k, p);
     }
     const active = all.filter((x) => !x.deleted);
-    const byNorm = new Map(active.map((x) => [norm(x.name), x]));
-    let missing = active.filter((x) => !names.has(norm(x.name)) && (x.hadRows || x.auto));
+    const byNorm = new Map(active.map((x) => [pk(x.name), x]));
+    let missing = active.filter((x) => !x.core && !names.has(pk(x.name)) && (x.hadRows || x.auto));
     for (const [k, display] of names) {
       if (byNorm.has(k)) { const p = byNorm.get(k); if (!p.hadRows) { p.hadRows = true; Store.touch(p); changed = true; } continue; }
       // שינוי שם: רוב השורות עם השם החדש היו שייכות לפרויקט שנעלם
       const votes = new Map();
       for (const r of rows) {
-        if (norm(r.c[m.project]) !== k) continue;
+        if (pk(r.c[m.project]) !== k) continue;
         const pid = membership.get(r.id);
         if (pid && missing.some((x) => x.id === pid)) votes.set(pid, (votes.get(pid) || 0) + 1);
       }
       let target = null;
       if (votes.size) { const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0]; target = missing.find((x) => x.id === best); }
-      if (!target) { target = all.find((x) => x.deleted && norm(x.name) === k) || null; if (target) target.deleted = false; }
+      if (!target) { target = all.find((x) => x.deleted && pk(x.name) === k) || null; if (target) target.deleted = false; }
       if (target) {
         // הפרויקט שינה שם בטבלת ההזמנות — גם שורות ה-BOM שלו עוברות לשם החדש
-        if (norm(target.name) !== k) for (const b of Store.rows('bom')) if (norm(b.c[bpc]) === norm(target.name)) { b.c[bpc] = display; Store.touch(b); }
+        if (pk(target.name) !== k) for (const b of Store.rows('bom')) if (pk(b.c[bpc]) === pk(target.name)) { b.c[bpc] = display; Store.touch(b); }
         target.name = display; target.hadRows = true; Store.touch(target);
         missing = missing.filter((x) => x !== target); byNorm.set(k, target); changed = true;
       } else {
@@ -245,10 +262,10 @@
     }
     // פרויקטים שמופיעים רק ב-BOM מקבלים גם הם לשונית
     const bomNames = new Map();
-    for (const r of Store.rows('bom')) { const v = String(r.c[bpc] ?? '').trim(); if (v && !bomNames.has(norm(v))) bomNames.set(norm(v), v); }
+    for (const r of Store.rows('bom')) { const v = String(r.c[bpc] ?? '').trim(); if (v && !bomNames.has(pk(v))) bomNames.set(pk(v), v); }
     for (const [k, display] of bomNames) {
-      if (byNorm.has(k)) { missing = missing.filter((x) => norm(x.name) !== k); continue; }
-      let t = all.find((x) => x.deleted && norm(x.name) === k);
+      if (byNorm.has(k)) { missing = missing.filter((x) => pk(x.name) !== k); continue; }
+      let t = all.find((x) => x.deleted && pk(x.name) === k);
       if (t) { t.deleted = false; Store.touch(t); }
       else {
         const list = Store.projects();
@@ -259,7 +276,7 @@
     }
     for (const p of missing) { p.deleted = true; Store.touch(p); changed = true; }
     membership = new Map();
-    for (const r of rows) { const p = byNorm.get(norm(r.c[m.project])); if (p) membership.set(r.id, p.id); }
+    for (const r of rows) { const p = byNorm.get(pk(r.c[m.project])); if (p) membership.set(r.id, p.id); }
     if (changed) Store.commit();
     return { changed, created };
   };
@@ -274,7 +291,7 @@
     Store.commit();
     return rows.length;
   };
-  D.projectColor = (name) => { const p = Store.projects().find((x) => norm(x.name) === norm(name)); return p ? p.color : null; };
+  D.projectColor = (name) => { const p = Store.projects().find((x) => pk(x.name) === pk(name)); return p ? p.color : null; };
 
   /* ---------- סטטיסטיקה ---------- */
   D.stats = (rows, newDays = 7) => {
@@ -294,8 +311,8 @@
 
   /* ---------- BOM ---------- */
   D.bomMapping = () => Object.assign({ project: 'b_proj', assembly: 'b_asm', part: 'b_pn', desc: 'b_desc', qty: 'b_qty' }, Store.db.settings.bomMapping || {});
-  D.bomProjOf = (r) => norm(r.c[D.bomMapping().project]);
-  D.bomLines = (p) => { const k = norm(p.name); return Store.rows('bom').filter((r) => { const v = D.bomProjOf(r); return v ? v === k : r.p === p.id; }); };
+  D.bomProjOf = (r) => pk(r.c[D.bomMapping().project]);
+  D.bomLines = (p) => { const k = pk(p.name); return Store.rows('bom').filter((r) => { const v = D.bomProjOf(r); return v ? v === k : r.p === p.id; }); };
   /** שדרוג נתונים: עמודת פרויקט ב-BOM (בגרסה הקודמת ה-BOM נשמר לפי מזהה לשונית) */
   D.ensureBomSchema = () => {
     const ds = Store.db.datasets.bom; let changed = false;
@@ -325,13 +342,13 @@
     for (const r of Store.rows('bom')) { const k = D.bomProjOf(r); if (!byProj.has(k)) byProj.set(k, []); byProj.get(k).push(r); }
     const allOrders = Store.rows('orders');
     const ordersBy = new Map();
-    for (const o of allOrders) { const k = m.project ? norm(o.c[m.project]) : ''; if (!ordersBy.has(k)) ordersBy.set(k, []); ordersBy.get(k).push(o); }
+    for (const o of allOrders) { const k = m.project ? pk(o.c[m.project]) : ''; if (!ordersBy.has(k)) ordersBy.set(k, []); ordersBy.get(k).push(o); }
     const groups = [];
     const lines = new Map();
     for (const [k, rows] of byProj) {
       const res = D.bomProgressFor(rows, k ? (ordersBy.get(k) || []) : allOrders);
       const name = k ? String(rows[0].c[D.bomMapping().project]).trim() : 'ללא פרויקט';
-      groups.push(Object.assign(res, { key: k, name, project: Store.projects().find((p) => norm(p.name) === k) || null }));
+      groups.push(Object.assign(res, { key: k, name, project: Store.projects().find((p) => pk(p.name) === k) || null }));
       for (const [id, info] of res.lines) lines.set(id, info);
     }
     const count = lines.size;

@@ -499,6 +499,10 @@
   function projectMenu(pid, x, y) {
     if (!D.can('admin')) return;
     const p = Store.projects().find((q) => q.id === pid); if (!p) return;
+    if (D.isCore(p)) return UI.menu(x, y, [
+      { title: p.name + ' · לשונית מרכזית' },
+      { label: 'החלפת צבע', icon: 'layers', action: () => { const i = D.PROJECT_COLORS.indexOf(p.color); p.color = D.PROJECT_COLORS[(i + 1) % D.PROJECT_COLORS.length]; Store.touch(p); Store.commit(); renderTabs(); } },
+    ]);
     UI.menu(x, y, [
       { title: p.name },
       { label: 'שינוי שם…', icon: 'edit', action: () => renameProject(p) },
@@ -1205,7 +1209,7 @@
       const projOf = (line) => String(get(line, 'project') || fallback || '').trim();
       if (mode === 'replaceAll') for (const r of Store.rows('bom')) { r.deleted = true; Store.touch(r); }
       else if (mode === 'replaceProjects') {
-        const keys = new Set(data.map((l) => D.norm(projOf(l))));
+        const keys = new Set(data.map((l) => D.pk(projOf(l))));
         for (const r of Store.rows('bom')) if (keys.has(D.bomProjOf(r))) { r.deleted = true; Store.touch(r); }
       }
       let o = Store.rows('bom').reduce((a, r) => Math.max(a, r.o || 0), 0);
@@ -1408,7 +1412,7 @@
       actions: [{ label: 'סגירה' }],
     });
   }
-  const inBomP = (r, p) => { const v = D.bomProjOf(r); return v ? v === D.norm(p.name) : r.p === p.id; };
+  const inBomP = (r, p) => { const v = D.bomProjOf(r); return v ? v === D.pk(p.name) : r.p === p.id; };
   const bomRoleOf = (id) => { const bm = D.bomMapping(); const r = D.BOM_ROLES.find((x) => bm[x.key] === id); return r ? r.label : ''; };
 
   /* ================= טבלת BOM (כללית או של פרויקט) ================= */
