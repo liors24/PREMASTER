@@ -1097,3 +1097,49 @@ h1, h2, .kpi-n, .hero-txt h2 { letter-spacing: -.015em; }
 .gc.has-chip .chip { box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 2px 6px -3px rgba(19,38,59,.25); }
 .gc .ptag { font-weight: 500; }
 .gc .ptag, .gc .chip { white-space: nowrap; flex: none; }
+
+/* =========================================================
+   גופן, גודל ויישור בטבלה
+   ========================================================= */
+.grid-host { --cell-family: "Rubik", system-ui, sans-serif; }
+.gc { font-family: var(--cell-family); font-size: var(--cell-font, 14px); }
+.gc.wrap { line-height: calc(var(--cell-font, 14px) * 1.38); }
+.grid-host[data-align="right"] .gc { justify-content: flex-start; text-align: right; }
+.grid-host[data-align="left"] .gc { justify-content: flex-end; text-align: left; }
+.grid-host[data-align="center"] .gc { justify-content: center; text-align: center; }
+.grid-host .gc.al-right { justify-content: flex-start; text-align: right; }
+.grid-host .gc.al-left { justify-content: flex-end; text-align: left; }
+.grid-host .gc.al-center { justify-content: center; text-align: center; }
+.gc .chip { font-size: calc(var(--cell-font, 14px) * .93); height: auto; min-height: calc(var(--cell-font, 14px) * 1.85); }
+.view-dlg input[type=range] { width: 100%; accent-color: var(--accent); }
+.align-seg { width: 100%; }
+.align-seg button { flex: 1; justify-content: center; }
+.view-preview { margin: 4px 0 10px; padding: 14px 16px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line-2); line-height: 1.5; transition: font-size .15s; }
+
+/* =========================================================
+   חיפוש בתוך עמודה
+   ========================================================= */
+.col-search { position: fixed; z-index: 75; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 6px 0 12px; border-radius: 14px; background: var(--glass-strong); -webkit-backdrop-filter: blur(24px) saturate(1.6); backdrop-filter: blur(24px) saturate(1.6); border: 1px solid var(--glass-line); box-shadow: var(--shadow-pop); color: var(--ink-3); transform: translateY(-6px) scale(.97); opacity: 0; transition: transform .22s cubic-bezier(.2,1.4,.4,1), opacity .16s; }
+.col-search.in { transform: none; opacity: 1; }
+.col-search.out { transform: translateY(-4px) scale(.98); opacity: 0; }
+.col-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 14px; color: var(--ink); }
+.col-search em { font-style: normal; font-size: 12px; color: var(--accent-2); white-space: nowrap; }
+:root[data-theme="dark"] .col-search { background: rgba(30, 47, 74, .9); }
+
+/* =========================================================
+   כלים נוספים — מוסתרים מאחורי כפתור, נפתחים באנימציה
+   ========================================================= */
+.more-btn { position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px 0 12px; border-radius: 17px; border: 1px solid var(--glass-line); background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: var(--ink-2); font-weight: 500; cursor: pointer; transition: background .25s, color .25s, border-color .25s, box-shadow .25s; }
+.more-btn .ic { transition: transform .45s cubic-bezier(.2,1.6,.4,1); }
+.more-btn:hover { color: var(--accent-2); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.more-btn:hover .ic { transform: scale(1.15); }
+.more-btn.open { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 8px 20px -10px var(--accent); }
+.more-btn.open .ic { transform: rotate(90deg) scale(1.1); }
+.more-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.more-tools[hidden] { display: none; }
+.more-tools .mt-i { padding-inline-start: 10px; border-inline-start: 1px solid var(--line); }
+.more-tools.opening .mt-i { animation: toolPop .5s cubic-bezier(.2,1.5,.4,1) both; animation-delay: calc(var(--i, 0) * 70ms); }
+.more-tools.opening .mt-i > * { animation: toolPop .45s cubic-bezier(.2,1.6,.4,1) both; animation-delay: calc(var(--i, 0) * 70ms + 60ms); }
+.more-tools.closing .mt-i { animation: toolOut .2s ease-in both; }
+@keyframes toolPop { 0% { opacity: 0; transform: translateX(18px) scale(.7) rotate(-4deg); } 60% { opacity: 1; } 100% { opacity: 1; transform: none; } }
+@keyframes toolOut { to { opacity: 0; transform: translateX(14px) scale(.85); } }

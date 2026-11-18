@@ -21,6 +21,8 @@
     newTabs: new Set(),
     wrap: localStorage.getItem('pt.wrap') !== '0',
     zoom: +(localStorage.getItem('pt.zoom') || 1),
+    moreOpen: !!sessionStorage.getItem('pt.more'),
+    view: Object.assign({ font: 'Rubik', size: 14, align: 'center' }, (() => { try { return JSON.parse(localStorage.getItem('pt.view')) || {}; } catch { return {}; } })()),
     pw: null, // סיסמת המשתמש בזיכרון בלבד (לא נשמרת) — להפעלת כניסה מכל מכשיר
   };
   const rowHeight = () => DENSITY[S.density] || 36;
@@ -737,15 +739,20 @@
         <div class="tb-group">
           <button class="icon-btn" id="undo" title="ביטול (Ctrl+Z)" aria-label="ביטול">${icon('undo', 17)}</button>
           <button class="icon-btn" id="redo" title="חזרה (Ctrl+Y)" aria-label="חזרה">${icon('redo', 17)}</button>
-          <button class="icon-btn" id="bulk" title="הזנת ערך לכל המסומנים (Ctrl+Enter)" aria-label="הזנה מרובה">${icon('wand', 17)}</button>
-          <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקה">${icon('trash', 17)}</button>
-          <button class="btn btn-ghost danger-ghost" id="clearTbl" title="מחיקת כל השורות בטבלה">${icon('trash', 16)}<span>מחיקת הטבלה</span></button>
         </div>
-        ${viewControls()}
-        <div class="tb-group">
-          <button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button>
-          <button class="btn btn-ghost" id="statusBtn">${icon('check', 16)}<span>סטטוסים</span></button>
-          <button class="icon-btn" id="density" title="צפיפות שורות" aria-label="צפיפות">${icon('height', 17)}</button>
+        ${moreButton()}
+        <div class="more-tools" id="moreTools" ${S.moreOpen ? '' : 'hidden'}>
+          <div class="tb-group mt-i" style="--i:0">
+            <button class="icon-btn" id="bulk" title="הזנת ערך לכל המסומנים (Ctrl+Enter)" aria-label="הזנה מרובה">${icon('wand', 17)}</button>
+            <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקת שורות">${icon('trash', 17)}</button>
+            <button class="btn btn-ghost danger-ghost" id="clearTbl" title="מחיקת כל השורות בטבלה">${icon('trash', 16)}<span>מחיקת הטבלה</span></button>
+          </div>
+          ${viewControls(1)}
+          <div class="tb-group mt-i" style="--i:3">
+            <button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button>
+            <button class="btn btn-ghost" id="statusBtn">${icon('check', 16)}<span>סטטוסים</span></button>
+            <button class="icon-btn" id="density" title="צפיפות שורות" aria-label="צפיפות">${icon('height', 17)}</button>
+          </div>
         </div>
         <div class="chips" id="chips"></div>
       </div>
@@ -764,7 +771,7 @@
     const g = new Grid(area, {
       dataset: 'orders',
       label: p ? 'הזמנות ' + p.name : 'כל ההזמנות',
-      rowHeight, wrap: () => S.wrap, onZoom: zoomChanged,
+      rowHeight, wrap: () => S.wrap, onZoom: zoomChanged, cellFont: () => S.view, onSearch: () => renderChips(),
       filter: (row) => (!p || D.inProject(row, p)) && (!S.catFilter || catMatch(row, S.catFilter)),
       defaults: () => (p && m.project ? { [m.project]: p.name } : {}),
       colRole: (id) => D.roleOf(id),
@@ -832,10 +839,12 @@
     const el = $('#chips'); if (!el || !S.grid) return;
     const g = S.grid; let h = '';
     if (S.catFilter) h += `<button class="fchip" data-cf>${esc(CF_LABEL[S.catFilter])} ${icon('x', 12)}</button>`;
+    for (const [cid, q] of Object.entries(g.colSearch || {})) { const c = g.allCols.find((x) => x.id === cid); if (c) h += `<button class="fchip" data-cs="${cid}">${icon('search', 12)} ${esc(c.name)}: ${esc(q)} ${icon('x', 12)}</button>`; }
     for (const cid of Object.keys(g.filters)) { const c = g.allCols.find((x) => x.id === cid); if (c) h += `<button class="fchip" data-f="${cid}">${icon('filter', 12)} ${esc(c.name)} ${icon('x', 12)}</button>`; }
     if (g.sort) { const c = g.allCols.find((x) => x.id === g.sort.colId); if (c) h += `<button class="fchip" data-s>${icon(g.sort.dir > 0 ? 'sortAsc' : 'sortDesc', 12)} ${esc(c.name)} ${icon('x', 12)}</button>`; }
     el.innerHTML = h;
     el.querySelectorAll('[data-cf]').forEach((b) => (b.onclick = () => { S.catFilter = null; g.refresh(); renderChips(); renderQuick(); }));
+    el.querySelectorAll('[data-cs]').forEach((b) => (b.onclick = () => { delete g.colSearch[b.dataset.cs]; g.refresh(); renderChips(); }));
     el.querySelectorAll('[data-f]').forEach((b) => (b.onclick = () => { delete g.filters[b.dataset.f]; g.refresh(); renderChips(); }));
     el.querySelectorAll('[data-s]').forEach((b) => (b.onclick = () => { g.setSort(null, 0); renderChips(); }));
   }
@@ -1417,12 +1426,17 @@
         <div class="tb-group">
           <button class="icon-btn" id="undo" title="ביטול (Ctrl+Z)" aria-label="ביטול">${icon('undo', 17)}</button>
           <button class="icon-btn" id="redo" title="חזרה (Ctrl+Y)" aria-label="חזרה">${icon('redo', 17)}</button>
-          <button class="icon-btn" id="bulk" title="הזנת ערך לכל המסומנים (Ctrl+Enter)" aria-label="הזנה מרובה">${icon('wand', 17)}</button>
-          <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקה">${icon('trash', 17)}</button>
-          <button class="btn btn-ghost danger-ghost" id="clearTbl" title="מחיקת כל השורות בטבלה">${icon('trash', 16)}<span>מחיקת הטבלה</span></button>
         </div>
-        ${viewControls()}
-        <div class="tb-group"><button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button></div>
+        ${moreButton()}
+        <div class="more-tools" id="moreTools" ${S.moreOpen ? '' : 'hidden'}>
+          <div class="tb-group mt-i" style="--i:0">
+            <button class="icon-btn" id="bulk" title="הזנת ערך לכל המסומנים (Ctrl+Enter)" aria-label="הזנה מרובה">${icon('wand', 17)}</button>
+            <button class="icon-btn" id="del" title="מחיקת שורות מסומנות" aria-label="מחיקת שורות">${icon('trash', 17)}</button>
+            <button class="btn btn-ghost danger-ghost" id="clearTbl" title="מחיקת כל השורות בטבלה">${icon('trash', 16)}<span>מחיקת הטבלה</span></button>
+          </div>
+          ${viewControls(1)}
+          <div class="tb-group mt-i" style="--i:3"><button class="btn btn-ghost" id="colsBtn">${icon('columns', 16)}<span>עמודות</span></button></div>
+        </div>
         <div class="chips" id="chips"><span class="muted sm-note">המצב של כל מק"ט מחושב מהזמנות הפרויקט שלו</span></div>
       </div>
       <div class="grid-area" id="gridArea"></div>`;
@@ -1434,7 +1448,7 @@
       { id: '_ord', name: 'הזמנות מקושרות', width: 180, type: 'text', virtual: true, get: (r) => { const i = prog().lines.get(r.id); const m = D.mapping(); return i ? i.orders.map((o) => o.c[m.order]).filter(Boolean).join(', ') : ''; } },
     ];
     const g = new Grid($('#gridArea'), {
-      dataset: 'bom', label: p ? 'BOM ' + p.name : 'BOM', rowHeight, wrap: () => S.wrap, onZoom: zoomChanged,
+      dataset: 'bom', label: p ? 'BOM ' + p.name : 'BOM', rowHeight, wrap: () => S.wrap, onZoom: zoomChanged, cellFont: () => S.view, onSearch: () => renderChips(),
       filter: p ? (r) => inBomP(r, p) : null,
       defaults: () => (p ? { [bm.project]: p.name } : {}),
       readOnly: () => !D.can('bom'), colLocked: () => !D.can('bom'),
@@ -1688,16 +1702,78 @@
   }
 
   /* ================= תצוגת טבלה: זום וגלישת טקסט ================= */
-  function viewControls() {
-    return `<div class="tb-group view-ctl" role="group" aria-label="תצוגת הטבלה">
+  function viewControls(i = 1) {
+    return `<div class="tb-group view-ctl mt-i" style="--i:${i}" role="group" aria-label="תצוגת הטבלה">
       <button class="icon-btn" data-zoom="-" title="הקטנת הטבלה (Ctrl + −)" aria-label="הקטנה">${icon('zoomOut', 17)}</button>
       <button class="zoom-val" data-zoom="0" title="חזרה ל-100% (Ctrl + 0)">${Math.round(S.zoom * 100)}%</button>
       <button class="icon-btn" data-zoom="+" title="הגדלת הטבלה (Ctrl + +)" aria-label="הגדלה">${icon('zoomIn', 17)}</button>
       <button class="icon-btn${S.wrap ? ' on' : ''}" id="wrapBtn" aria-pressed="${S.wrap}" title="גלישת טקסט בתאים">${icon('wrap', 17)}</button>
-    </div>`;
+    </div>
+    <div class="tb-group mt-i" style="--i:${i + 1}"><button class="btn btn-ghost" id="viewBtn" title="גופן, גודל טקסט ויישור">${icon('font', 16)}<span>גופן ויישור</span></button></div>`;
+  }
+  function moreButton() {
+    return `<button class="more-btn${S.moreOpen ? ' open' : ''}" id="moreBtn" type="button" aria-expanded="${!!S.moreOpen}" aria-controls="moreTools" title="כלים נוספים">${icon('more', 18)}<span>${S.moreOpen ? 'פחות' : 'כלים נוספים'}</span></button>`;
+  }
+  /** פתיחה/סגירה של סרגל הכלים הנוספים, עם אנימציה */
+  function bindMore() {
+    const btn = $('#moreBtn'), box = $('#moreTools'); if (!btn || !box) return;
+    // מסתירים קבוצות שכל הכפתורים בהן מוסתרים (לפי הרשאות)
+    box.querySelectorAll('.mt-i').forEach((gr) => { if (![...gr.children].some((c) => !c.hidden)) gr.hidden = true; });
+    btn.onclick = () => {
+      S.moreOpen = !S.moreOpen; sessionStorage.setItem('pt.more', S.moreOpen ? '1' : '');
+      btn.classList.toggle('open', S.moreOpen); btn.setAttribute('aria-expanded', S.moreOpen);
+      btn.querySelector('span').textContent = S.moreOpen ? 'פחות' : 'כלים נוספים';
+      if (S.moreOpen) { box.hidden = false; box.classList.remove('closing'); box.classList.remove('opening'); void box.offsetWidth; box.classList.add('opening'); }
+      else { box.classList.add('closing'); setTimeout(() => { if (!S.moreOpen) { box.hidden = true; box.classList.remove('closing'); } }, 220); }
+    };
+  }
+  /* ---------- גופן, גודל ויישור לטבלה ---------- */
+  const FONTS = [
+    ['Rubik', 'Rubik — מודרני ועגול'], ['Heebo', 'Heebo — נקי וחד'], ['Assistant', 'Assistant — צר וקריא'],
+    ['Noto Sans Hebrew', 'Noto Sans — ניטרלי'], ['Varela Round', 'Varela Round — רך'], ['Secular One', 'Secular One — מודגש'],
+    ['Frank Ruhl Libre', 'Frank Ruhl — סריף קלאסי'], ['Arial', 'Arial — מערכת'],
+  ];
+  const loadedFonts = new Set(['Rubik', 'Arial']);
+  function loadFont(f) {
+    if (loadedFonts.has(f)) return; loadedFonts.add(f);
+    const l = document.createElement('link'); l.rel = 'stylesheet';
+    l.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(f).replace(/%20/g, '+')}:wght@300;400;500;600;700&display=swap`;
+    document.head.appendChild(l);
+  }
+  function applyView(g) {
+    const v = S.view;
+    loadFont(v.font);
+    const host = g && g.host.querySelector('.grid-host');
+    if (host) { host.style.setProperty('--cell-font', v.size + 'px'); host.style.setProperty('--cell-family', `"${v.font}", "Rubik", system-ui, sans-serif`); host.dataset.align = v.align; }
+    if (g) { g.hCache.clear(); (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { g.hCache.clear(); g.refresh(true); }); g.refresh(true); }
+  }
+  function viewDialog(g) {
+    const v = S.view;
+    const body = document.createElement('div');
+    body.className = 'view-dlg';
+    body.innerHTML = `
+      <label class="field"><span>גופן</span><select data-font>${FONTS.map(([f, l]) => `<option value="${f}" ${v.font === f ? 'selected' : ''} style="font-family:'${f}'">${l}</option>`).join('')}</select></label>
+      <label class="field"><span>גודל טקסט · <b data-sizev>${v.size}px</b></span><input type="range" min="11" max="22" step="1" value="${v.size}" data-size></label>
+      <div class="field"><span>יישור הטקסט בתאים</span><div class="seg align-seg">${[['right', 'ימין'], ['center', 'מרכז'], ['left', 'שמאל']].map(([k, l]) => `<button type="button" data-al="${k}" class="${v.align === k ? 'on' : ''}">${icon('align-' + k, 15)}<span>${l}</span></button>`).join('')}</div></div>
+      <div class="view-preview" data-prev>מס׳ הזמנה 4500123 · <span class="chip c-delayed">בעיכוב</span> · הספק עדכן שהמשלוח יגיע בעוד שבועיים</div>
+      <p class="muted sm-note">ההגדרות נשמרות במכשיר הזה בלבד. יישור לעמודה מסוימת: קליק ימני על הכותרת שלה.</p>`;
+    const prev = body.querySelector('[data-prev]');
+    const draw = () => { loadFont(v.font); prev.style.fontFamily = `"${v.font}", Rubik, sans-serif`; prev.style.fontSize = v.size + 'px'; prev.style.textAlign = v.align; body.querySelector('[data-sizev]').textContent = v.size + 'px'; };
+    const save = () => { localStorage.setItem('pt.view', JSON.stringify(v)); applyView(g); draw(); };
+    body.querySelector('[data-font]').onchange = (e) => { v.font = e.target.value; save(); };
+    body.querySelector('[data-size]').oninput = (e) => { v.size = +e.target.value; save(); };
+    body.querySelectorAll('[data-al]').forEach((b) => (b.onclick = () => { v.align = b.dataset.al; body.querySelectorAll('[data-al]').forEach((x) => x.classList.toggle('on', x === b)); save(); }));
+    draw();
+    UI.modal({ title: 'גופן, גודל ויישור בטבלה', body, actions: [
+      { label: 'ברירת מחדל', action: () => { Object.assign(v, { font: 'Rubik', size: 14, align: 'center' }); save(); } },
+      { label: 'סגירה', primary: true },
+    ] });
   }
   function bindViewControls(g) {
     g.setZoom(S.zoom);
+    applyView(g);
+    bindMore();
+    const vb = $('#viewBtn'); if (vb) vb.onclick = () => viewDialog(g);
     document.querySelectorAll('[data-zoom]').forEach((b) => (b.onclick = () => {
       const d = b.dataset.zoom;
       g.setZoom(d === '0' ? 1 : g.z + (d === '+' ? 0.1 : -0.1));

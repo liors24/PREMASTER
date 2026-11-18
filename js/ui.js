@@ -49,6 +49,10 @@
     wrap: '<path d="M4 6h16M4 12h13a3 3 0 0 1 0 6h-4M4 18h5M13 15l-2 3 2 3"/>',
     zoomIn: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4M11 8v6M8 11h6"/>',
     zoomOut: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4M8 11h6"/>',
+    font: '<path d="M4 20l6-16h2l6 16M7 14h8"/><path d="M18 9h3M19.5 7.5v3" opacity=".7"/>',
+    'align-right': '<path d="M20 6H4M20 10H10M20 14H4M20 18H10"/>',
+    'align-center': '<path d="M20 6H4M17 10H7M20 14H4M17 18H7"/>',
+    'align-left': '<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>',
     box: '<path d="M21 8l-9-5-9 5 9 5zM3 8v8l9 5 9-5V8M12 13v8"/>',
   };
   const icon = (name, size = 16) => `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name] || ''}</svg>`;

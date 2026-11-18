@@ -66,6 +66,7 @@
       this.ds = opts.dataset;
       this.sort = null;           // {colId, dir}
       this.filters = {};          // colId -> Set(display values)
+      this.colSearch = {};        // colId -> טקסט לחיפוש בתוך העמודה
       this.search = '';
       this.view = []; this.cols = []; this.tops = [0]; this.colOff = [0];
       this.ranges = [{ r1: 0, c1: 0, r2: 0, c2: 0 }];
@@ -128,11 +129,13 @@
     }
     /** גובה אוטומטי לפי אורך הטקסט: כמה שורות צריך התא הארוך ביותר ברוחב העמודה שלו */
     autoH(row, base) {
-      const key = row.updatedAt + '|' + this.colSig + '|' + base;
+      const f = this.o.cellFont ? this.o.cellFont() : { font: 'Rubik', size: 14 };
+      const key = row.updatedAt + '|' + this.colSig + '|' + base + '|' + f.font + f.size;
       const hit = this.hCache.get(row.id);
       if (hit && hit.k === key) return hit.h;
       const ctx = (this._ctx ||= document.createElement('canvas').getContext('2d'));
-      ctx.font = '400 14px "Rubik", system-ui, sans-serif';
+      ctx.font = `400 ${f.size}px "${f.font}", "Rubik", system-ui, sans-serif`;
+      const cw = f.size * 0.44, lh = Math.round(f.size * 1.38);
       let lines = 1;
       for (const col of this.cols) {
         if (col.type === 'number') continue;
@@ -141,13 +144,13 @@
         const txt = display(col, v);
         const avail = (col.width || 120) - 26;
         const breaks = (txt.match(/\n/g) || []).length + 1;
-        if (txt.length * 6.2 <= avail && breaks === 1) continue;
+        if (txt.length * cw <= avail && breaks === 1) continue;
         let need = breaks;
-        if (txt.length * 6.2 > avail) need = Math.max(need, Math.ceil((ctx.measureText(txt).width * 1.08) / avail));
+        if (txt.length * cw > avail) need = Math.max(need, Math.ceil((ctx.measureText(txt).width * 1.08) / avail));
         if (need > lines) lines = need;
         if (lines >= 8) { lines = 8; break; }
       }
-      const h = lines === 1 ? base : Math.max(base, lines * 19 + 14);
+      const h = lines === 1 ? Math.max(base, lh + 14) : Math.max(base, lines * lh + 14);
       this.hCache.set(row.id, { k: key, h });
       return h;
     }
@@ -180,6 +183,12 @@
         const col = allCols.find((c) => c.id === cid);
         if (!col) { delete this.filters[cid]; continue; }
         rows = rows.filter((r) => set.has(display(col, this.val(r, col))));
+      }
+      for (const [cid, q0] of Object.entries(this.colSearch)) {
+        const col = allCols.find((c) => c.id === cid);
+        const q = String(q0 || '').trim().toLowerCase();
+        if (!col || !q) { delete this.colSearch[cid]; continue; }
+        rows = rows.filter((r) => display(col, this.val(r, col)).toLowerCase().includes(q));
       }
       if (this.search) {
         const q = this.search.toLowerCase();
@@ -252,7 +261,7 @@
       this.cols.forEach((c, j) => {
         const f = this.filters[c.id];
         const s = this.sort && this.sort.colId === c.id ? this.sort.dir : 0;
-        const marks = (f ? `<span class="gh-mark" title="מסונן">${UI.icon('filter', 12)}</span>` : '') + (s ? `<span class="gh-mark">${UI.icon(s > 0 ? 'sortAsc' : 'sortDesc', 12)}</span>` : '');
+        const marks = (this.colSearch[c.id] ? `<span class="gh-mark" title="חיפוש: ${esc(this.colSearch[c.id])}">${UI.icon('search', 12)}</span>` : '') + (f ? `<span class="gh-mark" title="מסונן">${UI.icon('filter', 12)}</span>` : '') + (s ? `<span class="gh-mark">${UI.icon(s > 0 ? 'sortAsc' : 'sortDesc', 12)}</span>` : '');
         let role = this.o.colRole ? this.o.colRole(c.id) : '';
         if (role && c.name.replace(/["'״׳]/g, '').includes(role.replace(/["'״׳]/g, ''))) role = '';
         const locked = this.o.colLocked && this.o.colLocked(c);
@@ -290,7 +299,7 @@
           const v = this.val(row, col);
           const txt = display(col, v);
           const d = decorate ? decorate(row, col, v, txt) : null;
-          const cls = 'gc t-' + (col.type || 'text') + (wrap ? ' wrap' : '') + (j === 0 ? ' frz' : '') + (!col.virtual && this.o.readOnly && this.o.readOnly(col, row) ? ' ro' : '') + (d && d.cls ? ' ' + d.cls : '');
+          const cls = 'gc t-' + (col.type || 'text') + (wrap ? ' wrap' : '') + (col.align ? ' al-' + col.align : '') + (j === 0 ? ' frz' : '') + (!col.virtual && this.o.readOnly && this.o.readOnly(col, row) ? ' ro' : '') + (d && d.cls ? ' ' + d.cls : '');
           html += `<div class="${cls}" data-c="${j}" style="width:${col.width}px" role="gridcell">${d && d.html != null ? d.html : esc(txt)}</div>`;
         }
         html += '</div>';
@@ -955,13 +964,16 @@
     setSort(colId, dir) { this.sort = dir ? { colId, dir } : null; this.refresh(); }
     columnMenu(j, x, y) {
       const col = this.cols[j]; if (!col) return;
-      if (col.virtual) return UI.menu(x, y, [{ title: col.name + ' · מחושב' }, { label: 'מיון עולה', icon: 'sortAsc', action: () => this.setSort(col.id, 1) }, { label: 'מיון יורד', icon: 'sortDesc', action: () => this.setSort(col.id, -1) }, { label: 'סינון ערכים…', icon: 'filter', action: () => this.filterDialog(col) }, this.filters[col.id] ? { label: 'ניקוי סינון', icon: 'x', action: () => { delete this.filters[col.id]; this.refresh(); } } : null]);
+      if (col.virtual) return UI.menu(x, y, [{ title: col.name + ' · מחושב' }, { label: 'חיפוש בתוך העמודה…', icon: 'search', action: () => this.columnSearch(col, x, y) }, { label: 'מיון עולה', icon: 'sortAsc', action: () => this.setSort(col.id, 1) }, { label: 'מיון יורד', icon: 'sortDesc', action: () => this.setSort(col.id, -1) }, { label: 'סינון ערכים…', icon: 'filter', action: () => this.filterDialog(col) }, this.filters[col.id] ? { label: 'ניקוי סינון', icon: 'x', action: () => { delete this.filters[col.id]; this.refresh(); } } : null]);
       const typeItem = (t, l) => ({ label: (col.type === t ? '✓ ' : '') + l, icon: col.type === t ? 'check' : null, action: () => { col.type = t; Store.touch(col); Store.commit(); this.refresh(true); } });
       const extra = this.o.columnMenuExtra ? this.o.columnMenuExtra(col) : [];
       const admin = this.allow('canAdmin');
-      if (!admin) return UI.menu(x, y, [{ title: col.name }, { label: 'מיון עולה', icon: 'sortAsc', action: () => this.setSort(col.id, 1) }, { label: 'מיון יורד', icon: 'sortDesc', action: () => this.setSort(col.id, -1) }, { label: 'סינון ערכים…', icon: 'filter', action: () => this.filterDialog(col) }, this.filters[col.id] ? { label: 'ניקוי סינון', icon: 'x', action: () => { delete this.filters[col.id]; this.refresh(); this.o.onFilter && this.o.onFilter(); } } : null, { label: 'התאמת רוחב לתוכן', icon: 'columns', action: () => this.autofit(j) }]);
+      const searchItem = { label: this.colSearch[col.id] ? `חיפוש בעמודה: "${this.colSearch[col.id]}"` : 'חיפוש בתוך העמודה…', icon: 'search', action: () => this.columnSearch(col, x, y) };
+      const clearSearch = this.colSearch[col.id] ? { label: 'ניקוי החיפוש בעמודה', icon: 'x', action: () => { delete this.colSearch[col.id]; this.refresh(); this.o.onSearch && this.o.onSearch(); } } : null;
+      if (!admin) return UI.menu(x, y, [{ title: col.name }, searchItem, clearSearch, { label: 'מיון עולה', icon: 'sortAsc', action: () => this.setSort(col.id, 1) }, { label: 'מיון יורד', icon: 'sortDesc', action: () => this.setSort(col.id, -1) }, { label: 'סינון ערכים…', icon: 'filter', action: () => this.filterDialog(col) }, this.filters[col.id] ? { label: 'ניקוי סינון', icon: 'x', action: () => { delete this.filters[col.id]; this.refresh(); this.o.onFilter && this.o.onFilter(); } } : null, { label: 'התאמת רוחב לתוכן', icon: 'columns', action: () => this.autofit(j) }]);
       UI.menu(x, y, [
         { title: col.name },
+        searchItem, clearSearch,
         { label: 'מיון עולה', icon: 'sortAsc', action: () => this.setSort(col.id, 1) },
         { label: 'מיון יורד', icon: 'sortDesc', action: () => this.setSort(col.id, -1) },
         this.sort ? { label: 'ביטול מיון', icon: 'x', action: () => this.setSort(null, 0) } : null,
@@ -975,6 +987,9 @@
         { sep: true },
         { title: 'סוג נתונים' },
         typeItem('text', 'טקסט'), typeItem('number', 'מספר'), typeItem('date', 'תאריך'),
+        { sep: true },
+        { title: 'יישור בעמודה' },
+        ...[['right', 'ימין'], ['center', 'מרכז'], ['left', 'שמאל'], ['', 'לפי הגדרת הטבלה']].map(([k, l]) => ({ label: ((col.align || '') === k ? '✓ ' : '') + l, icon: k ? 'align-' + k : 'refresh', action: () => { if (k) col.align = k; else delete col.align; Store.touch(col); Store.commit(); this.refresh(true); } })),
         ...(extra.length ? [{ sep: true }, ...extra] : []),
         { sep: true },
         { label: 'הסתרת עמודה', icon: 'eyeOff', action: () => { col.hidden = true; Store.touch(col); Store.commit(); this.refresh(true); } },
@@ -1019,6 +1034,33 @@
           } },
         ],
       });
+    }
+    /** חיפוש בתוך עמודה אחת — תיבה צפה ליד הכותרת, מסנן תוך כדי הקלדה */
+    columnSearch(col, x, y) {
+      document.querySelectorAll('.col-search').forEach((e) => e.remove());
+      const j = this.cols.indexOf(col);
+      const gh = this.head.querySelector(`.gh[data-c="${j}"]`);
+      const r = gh ? gh.getBoundingClientRect() : { right: x, bottom: y, width: 240 };
+      const box = document.createElement('div');
+      box.className = 'col-search';
+      box.innerHTML = `${UI.icon('search', 15)}<input type="search" placeholder="חיפוש ב${esc(col.name)}…" aria-label="חיפוש בעמודה ${esc(col.name)}"><em></em><button type="button" class="icon-btn sm" aria-label="סגירה">${UI.icon('x', 14)}</button>`;
+      document.body.appendChild(box);
+      const w = Math.max(260, Math.min(360, r.width + 60));
+      box.style.width = w + 'px';
+      box.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w)) + 'px';
+      box.style.top = (r.bottom + 6) + 'px';
+      const inp = box.querySelector('input'); const cnt = box.querySelector('em');
+      inp.value = this.colSearch[col.id] || '';
+      const run = () => { if (inp.value.trim()) this.colSearch[col.id] = inp.value; else delete this.colSearch[col.id]; this.refresh(); cnt.textContent = inp.value.trim() ? `${this.view.length} שורות` : ''; this.o.onSearch && this.o.onSearch(); };
+      let t; inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 150); });
+      const close = () => { box.classList.add('out'); setTimeout(() => box.remove(), 160); document.removeEventListener('mousedown', outside, true); };
+      const outside = (e) => { if (!box.contains(e.target)) close(); };
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Escape' || e.key === 'Enter') { e.preventDefault(); close(); this.focus(); } });
+      box.querySelector('button').onclick = () => { inp.value = ''; run(); close(); };
+      setTimeout(() => document.addEventListener('mousedown', outside, true), 0);
+      requestAnimationFrame(() => box.classList.add('in'));
+      inp.focus(); inp.select();
+      if (inp.value) run();
     }
     clearFilters() { this.filters = {}; this.sort = null; this.search = ''; this.refresh(); }
     setSearch(q) { this.search = q.trim(); this.refresh(); }
