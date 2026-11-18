@@ -1186,3 +1186,20 @@ body.is-scrolling .gr:hover .gc, body.is-scrolling .gr:hover .rh { background: i
 /* כל שורה מבודדת — שינוי בתא לא מחשב מחדש את כל הטבלה */
 .gr { contain: layout style; }
 .gc { contain: layout style paint; }
+
+/* תאריך אספקה 4/1/27 — סגול עדין */
+.gc.d-special { background: rgba(126, 87, 176, .13) !important; color: #6A45A0; font-weight: 600; }
+.gr.odd .gc.d-special { background: rgba(126, 87, 176, .16) !important; }
+:root[data-theme="dark"] .gc.d-special { background: rgba(164, 124, 219, .2) !important; color: #D3BDF2; }
+
+/* =========================================================
+   כותרות הטבלה: ממורכזות, עד שתי שורות לשם ארוך
+   ========================================================= */
+.grid-head, .gh-corner { height: 58px !important; }
+.grid-empty { inset: 58px 56px 0 0; }
+.gh { justify-content: center; text-align: center; padding: 4px 22px !important; gap: 3px; }
+.gh-text { flex: 0 1 auto; align-items: center; justify-content: center; gap: 2px; line-height: 1.22; }
+.gh-name { white-space: normal; overflow-wrap: anywhere; word-break: normal; text-overflow: clip; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; flex: none; max-width: 100%; text-wrap: balance; }
+.gh-role { max-width: 100%; }
+.gh-menu { position: absolute; left: 2px; top: 50%; transform: translateY(-50%); }
+.gh-mark { position: relative; }

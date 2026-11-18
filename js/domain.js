@@ -141,6 +141,22 @@
     if (q == null || q <= 0) return null;
     return s === q ? 'full' : s < q ? 'part' : 'over';
   };
+  /** תאריך אספקה מיוחד (4/1/27) — נצבע בסגול עדין */
+  D.SPECIAL_DATES = ['2027-01-04'];
+  /** כל צורת כתיבה של תאריך → YYYY-MM-DD (יום/חודש/שנה, כמו בישראל) */
+  D.toISO = (v) => {
+    const s = String(v ?? '').trim(); let m;
+    if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s))) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+    if ((m = /^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2,4})$/.exec(s))) { let y = +m[3]; if (y < 100) y += 2000; return `${y}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`; }
+    if (/^\d{5}(\.\d+)?$/.test(s)) return new Date(Math.round((+s - 25569) * 864e5)).toISOString().slice(0, 10);
+    return '';
+  };
+  const spMemo = new Map();
+  D.isSpecialDate = (v) => {
+    if (!v) return false; const k = String(v); let r = spMemo.get(k);
+    if (r === undefined) { r = D.SPECIAL_DATES.includes(D.toISO(k)); if (spMemo.size > 3000) spMemo.clear(); spMemo.set(k, r); }
+    return r;
+  };
   /** מי יכול לפתוח לשונית פרויקט: מנהל רכש וקדמים */
   D.canTabs = () => { const u = D.me(); return D.can('admin') || !!(u && u.role === 'expediter'); };
   /** עמודה שרוב הערכים בה מספריים (למשל קוד/מספר ספק) */

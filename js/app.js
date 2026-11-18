@@ -816,6 +816,7 @@
     return (row, col, v, txt) => {
       const m = D.mapping();
       if (col.id === m.status) { const c = D.cat(row); return { cls: 'has-chip', html: txt ? `<span class="chip c-${c}">${esc(txt)}</span>` : (c === 'delayed' ? `<span class="chip c-delayed">באיחור</span>` : '') }; }
+      if ((col.id === m.due || /delivery\s*date/i.test(col.name)) && D.isSpecialDate(v)) return { cls: 'd-special' };
       if (col.id === m.due && D.isOverdue(row)) return { cls: 'overdue' };
       if (col.id === m.qtySupplied) { const st = D.supplyState(row); return { cls: st ? 'qs qs-' + st : '', html: txt === '' ? '0' : null }; }
       if (!p && col.id === m.project && txt) { const pc = D.projectColor(txt); if (pc) return { html: `<span class="ptag" style="--pc:${pc}"><i class="pdot"></i>${esc(txt)}</span>` }; }

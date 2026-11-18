@@ -7,7 +7,7 @@
 (function (global) {
   'use strict';
   const RH_W = 56;
-  const HEAD_H = 44;
+  const HEAD_H = 58;
   const MIN_W = 44, MIN_H = 22;
   const esc = (s) => UI.esc(s);
   const clone = (o) => JSON.parse(JSON.stringify(o));
