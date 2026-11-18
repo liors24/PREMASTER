@@ -1,5 +1,5 @@
 /* Service Worker — אפליקציה למחשב, עבודה בלי רשת, ותזכורת יומית ברקע */
-const CACHE = 'pt-cache-202611180800';
+const CACHE = 'pt-cache-202611180835';
 const CORE = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -18,13 +18,17 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+  // דף ה-HTML וה-SW נבדקים מול השרת בכל פעם (cache: no-cache) — כך גרסה חדשה מגיעה מיד גם לאפליקציה המותקנת
+  const isPage = req.mode === 'navigate' || url.pathname.endsWith('/') || url.pathname.endsWith('.html') || url.pathname.endsWith('.webmanifest');
   e.respondWith(
-    fetch(req).then((res) => {
+    fetch(req, isPage ? { cache: 'no-cache' } : undefined).then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
       return res;
     }).catch(() => caches.match(req, { ignoreSearch: true }).then((r) => r || caches.match('./')))
   );
 });
+
+self.addEventListener('message', (e) => { if (e.data === 'skip-waiting') self.skipWaiting(); });
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();

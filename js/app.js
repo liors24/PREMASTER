@@ -107,9 +107,30 @@
         navigator.serviceWorker.addEventListener('message', (e) => { if (e.data === 'open-delayed') openDelayed(); });
       }
       window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); this.deferred = e; this.sync(); });
+      setInterval(() => this.checkUpdate(), 15 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') this.checkUpdate(); });
+      setTimeout(() => this.checkUpdate(), 8000);
       window.addEventListener('appinstalled', () => { this.deferred = null; this.sync(); UI.toast('האפליקציה הותקנה במחשב.', 'ok'); });
     },
     installed() { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; },
+    /** בדיקה אם עלתה גרסה חדשה לאתר — חשוב במיוחד לאפליקציה מותקנת שנשארת פתוחה כל היום */
+    async checkUpdate() {
+      try {
+        const html = await fetch('index.html?_=' + Date.now(), { cache: 'no-store' }).then((r) => r.text());
+        const m = /APP_VERSION="(\d+)"/.exec(html);
+        if (!m || !window.APP_VERSION || m[1] === window.APP_VERSION || this.shown === m[1]) return;
+        if (+m[1] < +window.APP_VERSION) return;
+        this.shown = m[1];
+        if (this.reg) this.reg.update().catch(() => {});
+        const bar = document.createElement('div');
+        bar.className = 'update-bar'; bar.setAttribute('role', 'status');
+        bar.innerHTML = `${icon('refresh', 16)}<span>יש גרסה חדשה של המערכת</span><button class="btn btn-primary sm" type="button">עדכון עכשיו</button><button class="icon-btn sm" type="button" aria-label="אחר כך">${icon('x', 14)}</button>`;
+        bar.querySelector('.btn').onclick = () => { Store.flush && Store.flush(); location.reload(); };
+        bar.querySelector('.icon-btn').onclick = () => bar.remove();
+        document.body.appendChild(bar);
+        requestAnimationFrame(() => bar.classList.add('in'));
+      } catch { }
+    },
     canInstall() { return !!this.deferred && !this.installed(); },
     sync() { const b = $('#installBtn'); if (b) b.hidden = !this.canInstall(); },
     async install() {
